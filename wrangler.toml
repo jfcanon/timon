@@ -1,0 +1,24 @@
+name = "timon-worker"
+main = "src/index.js"
+compatibility_date = "2026-08-25"
+compatibility_flags = ["nodejs_compat"]
+
+# Durable Objects
+[durable_objects]
+bindings = [
+  { name = "SESSION", class_name = "SessionDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionDO"]
+
+# D1 database for task storage
+[[d1_databases]]
+binding = "TIMON_META"
+database_name = "timon-meta"
+database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
+
+# Secrets (set via wrangler secret put GROQ_API_KEY)
+# [vars]
+# GROQ_API_KEY = ""  # Set as secret, not in code

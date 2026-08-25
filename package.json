@@ -1,0 +1,16 @@
+{
+  "name": "timon-worker",
+  "version": "1.0.0",
+  "description": "Timon voice-activated task manager Cloudflare Worker",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4",
+    "wrangler": "^4.32.0"
+  }
+}
