@@ -1,1 +1,195 @@
-{"tests": [], "summary": {}}
+{
+  "tests": [
+    {
+      "id": "001",
+      "text": "buy milk",
+      "expected": "buy milk",
+      "transcription": "Buy milk.",
+      "latency_ms": 1524,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "002",
+      "text": "call dentist tomorrow",
+      "expected": "call dentist tomorrow",
+      "transcription": "Call dentist tomorrow.",
+      "latency_ms": 1582,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "003",
+      "text": "file taxes friday",
+      "expected": "file taxes friday",
+      "transcription": "File Taxes Friday",
+      "latency_ms": 1572,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "004",
+      "text": "add eggs to grocery list",
+      "expected": "add eggs to grocery list",
+      "transcription": "Add eggs to grocery list.",
+      "latency_ms": 1697,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "005",
+      "text": "prepare slides for monday meeting",
+      "expected": "prepare slides for monday meeting",
+      "transcription": "Prepare slides for Monday meeting.",
+      "latency_ms": 1536,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "006",
+      "text": "grab coffee before standup",
+      "expected": "grab coffee before standup",
+      "transcription": "Grab coffee before stand up.",
+      "latency_ms": 1503,
+      "status": "FAIL",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "007",
+      "text": "schedule doctor appointment next week",
+      "expected": "schedule doctor appointment next week",
+      "transcription": "Schedule doctor appointment next week.",
+      "latency_ms": 1495,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "008",
+      "text": "project deadline is friday",
+      "expected": "project deadline is friday",
+      "transcription": "Project deadline is Friday.",
+      "latency_ms": 1470,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "009",
+      "text": "do laundry tonight",
+      "expected": "do laundry tonight",
+      "transcription": "Do laundry tonight.",
+      "latency_ms": 1433,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "010",
+      "text": "stop by grocery store on way home",
+      "expected": "stop by grocery store on way home",
+      "transcription": "Stop by grocery store on way home.",
+      "latency_ms": 1605,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "011",
+      "text": "reply to john email about budget",
+      "expected": "reply to john email about budget",
+      "transcription": "Reply to John E-mail about budget.",
+      "latency_ms": 1570,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "012",
+      "text": "gym at six pm today",
+      "expected": "gym at six pm today",
+      "transcription": "gym at 6 p.m today.",
+      "latency_ms": 1637,
+      "status": "FAIL",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "013",
+      "text": "buy birthday gift for sarah",
+      "expected": "buy birthday gift for sarah",
+      "transcription": "Buy birthday gift for Sarah.",
+      "latency_ms": 1558,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "014",
+      "text": "schedule car maintenance",
+      "expected": "schedule car maintenance",
+      "transcription": "schedule car maintenance",
+      "latency_ms": 4876,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "015",
+      "text": "plan vacation to portugal",
+      "expected": "plan vacation to portugal",
+      "transcription": "Plan vacation to Portugal.",
+      "latency_ms": 4873,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "016",
+      "text": "call mom tonight",
+      "expected": "call mom tonight",
+      "transcription": "Call mom tonight.",
+      "latency_ms": 4809,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "017",
+      "text": "read chapter five of book",
+      "expected": "read chapter five of book",
+      "transcription": "Read Chapter 5 of Book.",
+      "latency_ms": 4825,
+      "status": "FAIL",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "018",
+      "text": "send invoice to client",
+      "expected": "send invoice to client",
+      "transcription": "Send invoice to client.",
+      "latency_ms": 4854,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "019",
+      "text": "book restaurant for saturday",
+      "expected": "book restaurant for saturday",
+      "transcription": "book restaurant for Saturday.",
+      "latency_ms": 1631,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    },
+    {
+      "id": "020",
+      "text": "pick up dry cleaning",
+      "expected": "pick up dry cleaning",
+      "transcription": "Pick up dry cleaning.",
+      "latency_ms": 4825,
+      "status": "PASS",
+      "normalized_status": "PASS"
+    }
+  ],
+  "summary": {
+    "total": 20,
+    "passed": 17,
+    "failed": 3,
+    "accuracy_pct": 85,
+    "normalized_accuracy_pct": 100,
+    "avg_latency_ms": 2543,
+    "worker_url": "https://timon-worker.ygdcbtmc4u.workers.dev",
+    "healthz": "{\"status\":\"ok\",\"service\":\"timon-worker\"}",
+    "websocket": "SKIP (wscat not installed)"
+  }
+}
