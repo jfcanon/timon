@@ -13,6 +13,10 @@ export default {
       return handleVoice(request, env);
     }
 
+    if (url.pathname === "/api/tasks" && request.method === "POST") {
+      return handleCreateTask(request, env);
+    }
+
     if (url.pathname === "/api/ws") {
       return handleWebSocketConnect(request, env);
     }
@@ -89,6 +93,64 @@ async function handleVoice(request, env) {
     }),
     {
       status: 200,
+      headers: { "content-type": "application/json" },
+    }
+  );
+}
+
+function verifyApiKey(request, env) {
+  const auth = request.headers.get("authorization") || "";
+  if (!auth.startsWith("Bearer ")) return false;
+  const token = auth.slice(7);
+  return token === env.TIMON_API_KEY;
+}
+
+async function handleCreateTask(request, env) {
+  if (!verifyApiKey(request, env)) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const { text, device_id, ts } = body;
+  if (!text || typeof text !== "string" || text.trim() === "") {
+    return new Response(JSON.stringify({ error: "text_required" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const db = env.TIMON_META;
+  await ensureSchema(db);
+
+  const intent = await extractIntent(text.trim(), env);
+  const taskId = await createTask(db, intent, "owner", device_id || null);
+
+  const sessionId = request.headers.get("x-session-id") || "default";
+  const id = env.SESSION.idFromName(sessionId);
+  const stub = env.SESSION.get(id);
+  await stub.addTask(taskId, intent);
+
+  const task = await db
+    .prepare("SELECT * FROM tasks WHERE id = ?")
+    .bind(taskId)
+    .first();
+
+  return new Response(
+    JSON.stringify({ task_id: taskId, task, status: "created" }),
+    {
+      status: 201,
       headers: { "content-type": "application/json" },
     }
   );

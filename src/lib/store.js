@@ -44,7 +44,7 @@ export async function ensureSchema(db) {
     .run();
 }
 
-export async function createTask(db, intent, userId = "owner") {
+export async function createTask(db, intent, userId = "owner", deviceId = null) {
   const taskId = crypto.randomUUID();
   const now = new Date().toISOString();
 
@@ -67,6 +67,9 @@ export async function createTask(db, intent, userId = "owner") {
     )
     .run();
 
+  const eventData = { ...intent };
+  if (deviceId) eventData.device_id = deviceId;
+
   await db
     .prepare(
       `
@@ -74,7 +77,7 @@ export async function createTask(db, intent, userId = "owner") {
     VALUES (?, ?, ?, ?, ?)
   `
     )
-    .bind(crypto.randomUUID(), now, taskId, "created", JSON.stringify(intent))
+    .bind(crypto.randomUUID(), now, taskId, "created", JSON.stringify(eventData))
     .run();
 
   return taskId;
