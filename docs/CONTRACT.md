@@ -39,12 +39,13 @@ WebSocket messages (server → client): `{ "type": "subscribed", "tasks": [...] 
 - **Error handling:** Returns `{ error: "transcription_failed", message: err.message }` on any failure (network, 4xx/5xx, empty transcript)
 - **No retries** — fail-fast per Talvi idiom
 
-### `src/lib/intents.js` — **PARTIAL (uses Cloudflare Workers AI, not DeepSeek/OpenRouter)**
+### `src/lib/intents.js` — **PARTIAL / EFFECTIVELY HEURISTIC-ONLY (LLM path is dead code)**
 - **Function:** `extractIntent(transcript, env) → { title, date, priority, category, tags }`
-- **Current LLM:** `@cf/meta/llama-2-7b-chat-int8` via `env.AI.run()` (Cloudflare Workers AI)
+- **Code references LLM:** `@cf/meta/llama-2-7b-chat-int8` via `env.AI.run()` (Cloudflare Workers AI)
+- **BUT `env.AI` is NOT bound:** `wrangler.toml` declares no `[ai]` binding, so `env.AI` is `undefined` at runtime. `env.AI.run()` always throws `TypeError: Cannot read properties of undefined (reading 'run')`, and the catch block always returns the heuristic fallback. **In production the worker never calls any LLM — intents are 100% heuristic.** Verified empirically: calling `extractIntent('Thank you.', {})` returns the fallback, and the live `/api/voice` response in §7 is byte-identical to it.
 - **Prompt:** Hardcoded extraction prompt requesting JSON with title, date, priority, category, tags
 - **Fallback:** On any error, returns heuristic defaults: `{ title: transcript.slice(0,50), date: null, priority: "medium", category: null, tags: [] }`
-- **Gap:** Locked decision (NID-465) says STT = Groq, but intent extraction should use DeepSeek via OpenRouter (apollo worker). Current code uses Cloudflare Workers AI — this is a deviation from the Jarvis integration spec (Option A).
+- **Gap:** Locked decision (NID-465) says intent extraction should use DeepSeek via OpenRouter (apollo worker). Today there is nothing to swap — the LLM call is non-functional, so Stage 3 must wire a working LLM, not replace an active one.
 
 ### `src/lib/store.js` — **REAL (full schema support, partial API exposure)**
 - **`ensureSchema(db)`** — Creates three tables: `task_events`, `tasks`, `dependencies` (see D1 Schema below)
@@ -123,7 +124,7 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 ```
 
 **Required secrets:** `GROQ_API_KEY` (Groq API key for Whisper STT)
-**Note:** `env.AI` (Cloudflare Workers AI) is implicitly available — used by `intents.js` for Llama-2-7b.
+**Note:** There is NO `[ai]` binding in `wrangler.toml`. Cloudflare Workers AI is **not** implicitly available — it must be declared as a binding. `env.AI` is therefore `undefined` at runtime, and the `intents.js` Llama-2 call always throws (see §2). If Workers AI were intended, an `[ai]` binding would have to be added — but the NID-465 locked decision forbids Cloudflare Workers AI (quota error 4006; cost must stay $0).
 
 ---
 
@@ -165,7 +166,7 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 | **Task List/Filter API** | **Missing** | No `GET /api/tasks` with query params (status, category, parent, etc.). |
 | **UI (minimal single-hue, reduced-motion, real form controls)** | **Missing** | No frontend code in this repo. |
 | **Jarvis Bridge (LLM tool `timon_create_task`)** | **Missing** | Apollo worker should call Timon over HTTP with text. Timon needs text-in endpoint. |
-| **DeepSeek via OpenRouter for intents** | **Missing** | Currently uses Cloudflare Workers AI (Llama-2-7b). Locked decision says DeepSeek via OpenRouter (apollo calls Groq STT → DeepSeek → Timon). |
+| **DeepSeek via OpenRouter for intents** | **Missing** | Code references Cloudflare Workers AI (Llama-2-7b) but no `[ai]` binding exists, so the LLM call is dead code — intents are currently 100% heuristic. Locked decision (NID-465) says DeepSeek via OpenRouter (apollo calls Groq STT → DeepSeek → Timon). Stage 3 must wire a working LLM, not replace an active one. |
 
 ---
 
