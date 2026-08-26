@@ -1,5 +1,7 @@
-const GROQ_MODEL = 'llama-3.1-8b-instant';
+const GROQ_MODEL = 'qwen/qwen3.8-27b';
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const FETCH_TIMEOUT_MS = 10000;
+const PRIORITIES = ['high', 'medium', 'low'];
 
 const SYSTEM_PROMPT = `Extract task details from voice transcripts. Output strict JSON only.
 Today's date: {TODAY}
@@ -14,9 +16,15 @@ Required JSON shape:
   "tags": ["array of short keyword strings"]
 }`;
 
+// Truncate to 50 code points (not UTF-16 units) so an emoji at the boundary
+// is never split into a broken surrogate pair.
+function truncateTitle(text) {
+  return Array.from(String(text || '')).slice(0, 50).join('');
+}
+
 function fallback(transcript) {
   return {
-    title: transcript.slice(0, 50),
+    title: truncateTitle(transcript),
     date: null,
     priority: 'medium',
     category: null,
@@ -24,7 +32,7 @@ function fallback(transcript) {
   };
 }
 
-function resolveDate(text, tz) {
+function todayInTimezone(tz) {
   const now = new Date();
   const locale = tz || 'UTC';
   try {
@@ -44,8 +52,20 @@ function resolveDate(text, tz) {
   }
 }
 
+// Fail fast: abort the fetch after FETCH_TIMEOUT_MS so a hung Groq call
+// doesn't hold a Worker until the platform cap (Talvi idiom).
+async function fetchWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function extractIntent(transcript, env) {
-  const today = resolveDate(null, env.TZ);
+  const today = todayInTimezone(env.TZ);
   const tz = env.TZ || 'UTC';
   const systemPrompt = SYSTEM_PROMPT
     .replace('{TODAY}', today)
@@ -58,7 +78,7 @@ export async function extractIntent(transcript, env) {
 
   let responseText = '';
   try {
-    const res = await fetch(GROQ_URL, {
+    const res = await fetchWithTimeout(GROQ_URL, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${env.GROQ_API_KEY}`,
@@ -91,9 +111,9 @@ export async function extractIntent(transcript, env) {
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
     const json = JSON.parse(cleaned);
     return {
-      title: (json.title || transcript.slice(0, 50)).slice(0, 50),
+      title: truncateTitle(json.title || transcript),
       date: json.date || null,
-      priority: json.priority || 'medium',
+      priority: PRIORITIES.includes(json.priority) ? json.priority : 'medium',
       category: json.category || null,
       tags: Array.isArray(json.tags) ? json.tags : [],
     };

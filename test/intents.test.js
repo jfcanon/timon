@@ -30,6 +30,9 @@ function makeEnv(overrides = {}) {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  // Without this, a fetch stub from an earlier test leaks into later tests —
+  // including the live smoke test, which would then never hit the real API.
+  vi.unstubAllGlobals();
 });
 
 describe('extractIntent — English transcripts', () => {
@@ -207,6 +210,24 @@ describe('extractIntent — error handling', () => {
     expect(Array.isArray(result.tags)).toBe(true);
     expect(result.tags).toEqual([]);
   });
+
+  it('clamps invalid priority to medium', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      mockGroqResponse('{"title":"Task","date":null,"priority":"URGENT","category":"work","tags":[]}')
+    ));
+    const result = await extractIntent('urgent task', makeEnv());
+    expect(result.priority).toBe('medium');
+  });
+
+  it('does not split a surrogate pair at the 50-char boundary', async () => {
+    const title = 'a'.repeat(49) + '😀' + 'b'.repeat(10);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      mockGroqResponse(`{"title":"${title}","date":null,"priority":"medium","category":null,"tags":[]}`)
+    ));
+    const result = await extractIntent('test', makeEnv());
+    // 50 code points, with the emoji (a surrogate pair) kept whole.
+    expect(result.title).toBe('a'.repeat(49) + '😀');
+  });
 });
 
 describe('extractIntent — GROQ_API_KEY usage', () => {
@@ -231,10 +252,20 @@ describe('extractIntent — GROQ_API_KEY usage', () => {
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
     expect(body.response_format).toEqual({ type: 'json_object' });
   });
+
+  it('injects today date and timezone into the system prompt', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(mockGroqResponse('{"title":"Test"}'));
+    vi.stubGlobal('fetch', fetchSpy);
+    await extractIntent('test', makeEnv({ TZ: 'America/Argentina/Buenos_Aires' }));
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+    const system = body.messages[0].content;
+    expect(system).toContain('Timezone: America/Argentina/Buenos_Aires');
+    expect(system).toMatch(/Today's date: \d{4}-\d{2}-\d{2}/);
+  });
 });
 
 describe('extractIntent — live smoke test', () => {
-  it.skipIf(!process.env.GROQ_API_KEY)('produces valid intent from real Groq call', async () => {
+  it.skipIf(!process.env.GROQ_API_KEY)('resolves a relative date from a real Groq call', async () => {
     const result = await extractIntent('buy milk tomorrow', {
       GROQ_API_KEY: process.env.GROQ_API_KEY,
       TZ: 'UTC',
@@ -243,5 +274,9 @@ describe('extractIntent — live smoke test', () => {
     expect(result.title.length).toBeLessThanOrEqual(50);
     expect(['high', 'medium', 'low']).toContain(result.priority);
     expect(Array.isArray(result.tags)).toBe(true);
+    // A real LLM must resolve "tomorrow" to a non-null date; the heuristic
+    // fallback always returns date: null. This assertion is the regression
+    // gate that catches a broken model / dead integration.
+    expect(result.date).not.toBeNull();
   });
 });
