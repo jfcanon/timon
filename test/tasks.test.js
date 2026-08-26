@@ -193,4 +193,56 @@ describe('POST /api/tasks', () => {
     expect(eventData.device_id).toBe('esp32-jarvis-01');
     expect(eventData.title).toBe('buy milk');
   });
+
+  it('should persist a valid ts as the task due date', async () => {
+    const env = makeEnv();
+    let capturedDueDate = null;
+
+    const mockTask = {
+      id: 'mock-task-id',
+      title: 'buy milk',
+      parent_id: null,
+      due_date: '2026-08-27T09:00:00.000Z',
+      priority: 'medium',
+      category: null,
+      created_at: 'now',
+      updated_at: 'now',
+    };
+    const chainable = {
+      run: vi.fn(async () => {}),
+      first: vi.fn(async () => mockTask),
+      all: vi.fn(async () => ({ results: [] })),
+    };
+    const bindFn = vi.fn((...args) => {
+      // tasks INSERT binds (id, title, parent_id, due_date, priority,
+      // category, created_at, updated_at) — due_date is arg index 3.
+      if (args.length === 8) capturedDueDate = args[3];
+      return chainable;
+    });
+    env.TIMON_META.prepare = vi.fn(() => ({
+      run: vi.fn(async () => {}),
+      bind: bindFn,
+    }));
+
+    const request = makeRequest(
+      { text: 'buy milk', device_id: 'esp32-jarvis-01', ts: '2026-08-27T09:00:00Z' },
+      env
+    );
+
+    const response = await worker.fetch(request, env);
+
+    expect(response.status).toBe(201);
+    expect(capturedDueDate).toBe('2026-08-27T09:00:00.000Z');
+  });
+
+  it('should return 400 on an invalid ts', async () => {
+    const env = makeEnv();
+    const request = makeRequest({ text: 'buy milk', ts: 'not-a-date' }, env);
+
+    const response = await worker.fetch(request, env);
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe('invalid_ts');
+  });
 });

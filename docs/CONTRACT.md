@@ -182,7 +182,7 @@ Authorization: Bearer <TIMON_API_KEY>
 {
   "text": "buy milk tomorrow",           # required, natural language
   "device_id": "esp32-jarvis-01",        # optional, stored in task_events
-  "ts": "2026-08-26T14:30:00.000Z"       # optional, ISO 8601; server uses now if absent
+  "ts": "2026-08-26T14:30:00.000Z"       # optional, ISO 8601; becomes the task due_date when present
 }
 ```
 
@@ -206,6 +206,7 @@ Authorization: Bearer <TIMON_API_KEY>
 
 ### Error Responses
 - `400 { "error": "text_required" }` — missing `text`
+- `400 { "error": "invalid_ts" }` — `ts` present but not a valid ISO 8601 date
 - `400 { "error": "intent_extraction_failed", "message": "..." }` — LLM failure (fallback still creates task)
 - `500 { "error": "internal_error" }` — DB or unexpected failure
 

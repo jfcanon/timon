@@ -131,10 +131,27 @@ async function handleCreateTask(request, env) {
     });
   }
 
+  // `ts` carries the reminder/due time from apollo's timon_create_task
+  // (remind_at) and is authoritative: until NID-469 lands, extractIntent is a
+  // heuristic that always returns date:null, so without this the due date
+  // never reaches the task row.
+  let dueDate = null;
+  if (ts !== undefined && ts !== null && ts !== "") {
+    const parsedDate = new Date(ts);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return new Response(JSON.stringify({ error: "invalid_ts" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    dueDate = parsedDate.toISOString();
+  }
+
   const db = env.TIMON_META;
   await ensureSchema(db);
 
   const intent = await extractIntent(text.trim(), env);
+  if (dueDate) intent.date = dueDate;
   const taskId = await createTask(db, intent, "owner", device_id || null);
 
   const sessionId = request.headers.get("x-session-id") || "default";
