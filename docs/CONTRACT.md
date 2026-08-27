@@ -12,10 +12,13 @@ All routes defined in `src/index.js`:
 | Method | Path | Auth | Request Body | Response JSON Shape |
 |--------|------|------|--------------|---------------------|
 | GET | `/healthz` | None | — | `{ "status": "ok", "service": "timon-worker" }` |
-| POST | `/api/voice` | None (session via `x-session-id` header) | `multipart/form-data` with `audio` file **OR** raw `audio/wav` body | `{ "task_id": "uuid", "intent": { "title": "string", "date": "ISO8601|null", "priority": "high\|medium\|low", "category": "string|null", "tags": "string[]" }, "transcription": "string" }` |
-| POST | `/api/tasks` | `Authorization: Bearer <TIMON_API_KEY>` | `{ "text": "string (required)", "device_id": "string (optional)", "ts": "ISO8601 (optional)" }` | `{ "task_id": "uuid", "task": { ... }, "status": "created" }` (201) |
-| GET | `/api/tasks/:taskId` | None | — | `{ "task": { "id": "uuid", "title": "string", "parent_id": "uuid|null", "due_date": "ISO8601|null", "priority": "string", "category": "string|null", "created_at": "ISO8601", "updated_at": "ISO8601" }, "parent": "task|null", "siblings": "task[]", "subtasks": "task[]", "blockers": "task[]" }` |
-| GET | `/api/ws` | None (session via `x-session-id` header) | WebSocket upgrade | WebSocket connection to `SessionDO` |
+| POST | `/api/voice` | `Authorization: Bearer <TIMON_API_KEY>` | `multipart/form-data` with `audio` file **OR** raw `audio/wav` body | `{ "task_id": "uuid", "intent": { "title": "string", "date": "ISO8601\|null", "priority": "high\|medium\|low", "category": "string\|null", "tags": "string[]" }, "transcription": "string" }` |
+| GET | `/api/tasks` | `Authorization: Bearer <TIMON_API_KEY>` | — (query params: `status`, `category`, `parent_id`) | `{ "tasks": [{ ...task, "subtask_count": "number", "blocked_by_count": "number" }] }` |
+| POST | `/api/tasks` | `Authorization: Bearer <TIMON_API_KEY>` | `{ "text": "string (required)", "device_id": "string (optional)", "ts": "ISO8601 (optional)", "priority": "high\|medium\|low (optional)", "category": "string (optional)" }` | `{ "task_id": "uuid", "task": { ... }, "status": "created" }` (201) |
+| GET | `/api/tasks/:taskId` | `Authorization: Bearer <TIMON_API_KEY>` | — | `{ "task": { ... }, "parent": "task\|null", "siblings": "task[]", "subtasks": "task[]", "blockers": "task[]", "blocks": "task[]" }` |
+| PATCH | `/api/tasks/:taskId` | `Authorization: Bearer <TIMON_API_KEY>` | `{ "title": "string (optional)", "status": "pending\|in_progress\|done\|cancelled (optional)", "due_date": "ISO8601\|null (optional)", "priority": "high\|medium\|low (optional)", "category": "string\|null (optional)", "parent_id": "uuid\|null (optional)" }` | `{ "task": { ... } }` |
+| DELETE | `/api/tasks/:taskId` | `Authorization: Bearer <TIMON_API_KEY>` | — | `{ "deleted": "uuid" }` |
+| GET | `/api/ws` | `Authorization: Bearer <TIMON_API_KEY>` | WebSocket upgrade | WebSocket connection to `SessionDO` |
 | * | * | — | — | `{ "status": 404, "body": "Not found" }` |
 
 ### SessionDO Routes (Durable Object `SessionDO`)
@@ -156,13 +159,15 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| **Hierarchy (parent_id)** | **Partial** | Column exists in DDL, `getTaskWithContext` returns parent/siblings/subtasks, but `createTask` always inserts `parent_id = null`. No API to set/update parent. |
-| **Categories** | **Partial** | Column exists, `extractIntent` returns category, `createTask` stores it. No category listing/filtering API. |
-| **Dependencies / Blockers** | **Partial** | `dependencies` table exists, `getTaskWithContext` returns blockers. No API to create/query dependencies. |
-| **Task Read API** | **Exists** | `GET /api/tasks/:taskId` returns full context (task, parent, siblings, subtasks, blockers). |
-| **Task Create API (text-in)** | **Missing** | Only `POST /api/voice` (audio-in) exists. Jarvis bridge needs `POST /api/tasks` with `{text, device_id, ts}`. |
-| **Task Update/Complete/Delete API** | **Missing** | No PATCH/DELETE endpoints. |
-| **Task List/Filter API** | **Missing** | No `GET /api/tasks` with query params (status, category, parent, etc.). |
+| **Hierarchy (parent_id)** | **Implemented** | Column exists in DDL, `getTaskWithContext` returns parent/siblings/subtasks, `PATCH /api/tasks/:id` supports `parent_id` updates. |
+| **Categories** | **Implemented** | Column exists, `extractIntent` returns category, `createTask` stores it, `GET /api/tasks?category=` filters. |
+| **Dependencies / Blockers** | **Implemented** | `dependencies` table exists, `getTaskWithContext` returns blockers and blocks, `addDependency` manages the graph. |
+| **Task Read API** | **Implemented** | `GET /api/tasks/:taskId` returns full context (task, parent, siblings, subtasks, blockers, blocks). |
+| **Task Create API (text-in)** | **Implemented** | `POST /api/tasks` with `{text, device_id, ts, priority, category}`. |
+| **Task Update API** | **Implemented** | `PATCH /api/tasks/:id` supports title, status, due_date, priority, category, parent_id. |
+| **Task Delete API** | **Implemented** | `DELETE /api/tasks/:id` re-parents children, removes dependencies, deletes task. |
+| **Task List/Filter API** | **Implemented** | `GET /api/tasks` with query params (status, category, parent_id), returns subtask_count and blocked_by_count. |
+| **Auth on all /api/* routes** | **Implemented** | `Authorization: Bearer <TIMON_API_KEY>` required on all /api/* routes. |
 | **UI (minimal single-hue, reduced-motion, real form controls)** | **Missing** | No frontend code in this repo. |
 | **Jarvis Bridge (LLM tool `timon_create_task`)** | **Missing** | Apollo worker should call Timon over HTTP with text. Timon needs text-in endpoint. |
 | **LLM intent extraction** | **Wired (NID-469)** | `src/lib/intents.js` now calls Groq chat completions (`qwen/qwen3.8-27b`, JSON mode, same `GROQ_API_KEY` as STT) over `fetch()`. NID-465's DeepSeek-via-OpenRouter alternative remains a fallback if Groq JSON output proves unreliable, per the NID-469 decision. |

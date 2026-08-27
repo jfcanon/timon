@@ -114,13 +114,13 @@ export async function getTaskWithContext(db, taskId) {
 
   const siblings = task.parent_id
     ? await db
-        .prepare(`SELECT * FROM tasks WHERE parent_id = ? AND id != ?`)
+        .prepare(`SELECT * FROM tasks WHERE parent_id = ? AND id != ? ORDER BY priority DESC, due_date ASC`)
         .bind(task.parent_id, taskId)
         .all()
     : { results: [] };
 
   const subtasks = await db
-    .prepare(`SELECT * FROM tasks WHERE parent_id = ?`)
+    .prepare(`SELECT * FROM tasks WHERE parent_id = ? ORDER BY priority DESC, due_date ASC`)
     .bind(taskId)
     .all();
 
@@ -135,12 +135,24 @@ export async function getTaskWithContext(db, taskId) {
     .bind(taskId)
     .all();
 
+  const blocks = await db
+    .prepare(
+      `
+    SELECT t.* FROM dependencies d
+    JOIN tasks t ON d.task_id = t.id
+    WHERE d.depends_on_id = ?
+  `
+    )
+    .bind(taskId)
+    .all();
+
   return {
     task,
     parent,
     siblings: siblings.results || [],
     subtasks: subtasks.results || [],
     blockers: blockers.results || [],
+    blocks: blocks.results || [],
   };
 }
 
@@ -334,5 +346,39 @@ export async function listTasks(db, { status, category, parent_id } = {}) {
   sql += ` ORDER BY created_at DESC`;
 
   const { results } = await db.prepare(sql).bind(...params).all();
-  return results || [];
+  const tasks = results || [];
+
+  if (tasks.length === 0) return [];
+
+  const taskIds = tasks.map((t) => t.id);
+  const placeholders = taskIds.map(() => "?").join(",");
+
+  const subtaskCounts = await db
+    .prepare(
+      `SELECT parent_id, COUNT(*) as cnt FROM tasks WHERE parent_id IN (${placeholders}) GROUP BY parent_id`
+    )
+    .bind(...taskIds)
+    .all();
+
+  const blockedCounts = await db
+    .prepare(
+      `SELECT task_id, COUNT(*) as cnt FROM dependencies WHERE task_id IN (${placeholders}) GROUP BY task_id`
+    )
+    .bind(...taskIds)
+    .all();
+
+  const subtaskMap = {};
+  for (const row of subtaskCounts.results || []) {
+    subtaskMap[row.parent_id] = row.cnt;
+  }
+  const blockedMap = {};
+  for (const row of blockedCounts.results || []) {
+    blockedMap[row.task_id] = row.cnt;
+  }
+
+  return tasks.map((task) => ({
+    ...task,
+    subtask_count: subtaskMap[task.id] || 0,
+    blocked_by_count: blockedMap[task.id] || 0,
+  }));
 }
