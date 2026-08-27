@@ -1,0 +1,27 @@
+# Deploy workflow — secrets are already set on the timon-worker (GROQ_API_KEY,
+# TIMON_API_KEY, TZ). We only need CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+# from the `production` GitHub environment to authenticate the deploy. Do NOT
+# add `wrangler secret put` steps — the Worker retains secrets across deploys.
+
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run test
+      - run: bunx wrangler deploy
