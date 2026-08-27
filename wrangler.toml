@@ -20,6 +20,8 @@ binding = "TIMON_META"
 database_name = "timon-meta"
 database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 
-# Secrets (set via wrangler secret put GROQ_API_KEY)
+# Secrets (set via wrangler secret put GROQ_API_KEY / TIMON_API_KEY)
 # [vars]
 # GROQ_API_KEY = ""  # Set as secret, not in code
+# TZ = "America/Argentina/Buenos_Aires"  # IANA timezone for intent date resolution (set via wrangler secret put TZ)
+# TIMON_API_KEY = "" # Set as secret, not in code — used for POST /api/tasks auth

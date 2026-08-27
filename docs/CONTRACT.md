@@ -40,13 +40,13 @@ WebSocket messages (server → client): `{ "type": "subscribed", "tasks": [...] 
 - **Error handling:** Returns `{ error: "transcription_failed", message: err.message }` on any failure (network, 4xx/5xx, empty transcript)
 - **No retries** — fail-fast per Talvi idiom
 
-### `src/lib/intents.js` — **PARTIAL / EFFECTIVELY HEURISTIC-ONLY (LLM path is dead code)**
+### `src/lib/intents.js` — **REAL (Groq chat completions, NID-469)**
 - **Function:** `extractIntent(transcript, env) → { title, date, priority, category, tags }`
-- **Code references LLM:** `@cf/meta/llama-2-7b-chat-int8` via `env.AI.run()` (Cloudflare Workers AI)
-- **BUT `env.AI` is NOT bound:** `wrangler.toml` declares no `[ai]` binding, so `env.AI` is `undefined` at runtime. `env.AI.run()` always throws `TypeError: Cannot read properties of undefined (reading 'run')`, and the catch block always returns the heuristic fallback. **In production the worker never calls any LLM — intents are 100% heuristic.** Verified empirically: calling `extractIntent('Thank you.', {})` returns the fallback, and the live `/api/voice` response in §7 is byte-identical to it.
-- **Prompt:** Hardcoded extraction prompt requesting JSON with title, date, priority, category, tags
-- **Fallback:** On any error, returns heuristic defaults: `{ title: transcript.slice(0,50), date: null, priority: "medium", category: null, tags: [] }`
-- **Gap:** Locked decision (NID-465) says intent extraction should use DeepSeek via OpenRouter (apollo worker). Today there is nothing to swap — the LLM call is non-functional, so Stage 3 must wire a working LLM, not replace an active one.
+- **LLM:** `qwen/qwen3.8-27b` via Groq chat completions over `fetch()` (`https://api.groq.com/openai/v1/chat/completions`, JSON mode, same `GROQ_API_KEY` as STT). Note: the NID-469 "llama-3.x-8b class" default is **not available** on this account (404 `model_not_found`); `qwen/qwen3.8-27b` was verified live to resolve relative dates and Spanish correctly.
+- **Auth:** `Authorization: Bearer ${env.GROQ_API_KEY}` (secret, not in git)
+- **Timeout:** 10s `AbortController` abort — fail-fast per Talvi idiom
+- **Prompt:** System prompt injects today's date (in `TZ` if set) and timezone so the LLM resolves relative dates ("tomorrow", "3pm"); `TZ` documented in `wrangler.toml`
+- **Fallback:** On any error (network, 4xx/5xx, malformed JSON), returns heuristic defaults: `{ title: transcript.slice(0,50), date: null, priority: "medium", category: null, tags: [] }`
 
 ### `src/lib/store.js` — **REAL (full schema support, partial API exposure)**
 - **`ensureSchema(db)`** — Creates three tables: `task_events`, `tasks`, `dependencies` (see D1 Schema below)
@@ -124,8 +124,9 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 # GROQ_API_KEY is a secret, NOT in [vars]
 ```
 
-**Required secrets:** `GROQ_API_KEY` (Groq API key for Whisper STT), `TIMON_API_KEY` (Bearer token for `POST /api/tasks` auth)
-**Note:** There is NO `[ai]` binding in `wrangler.toml`. Cloudflare Workers AI is **not** implicitly available — it must be declared as a binding. `env.AI` is therefore `undefined` at runtime, and the `intents.js` Llama-2 call always throws (see §2). If Workers AI were intended, an `[ai]` binding would have to be added — but the NID-465 locked decision forbids Cloudflare Workers AI (quota error 4006; cost must stay $0).
+**Required secrets:** `GROQ_API_KEY` (Groq key, shared by Whisper STT and intent extraction), `TIMON_API_KEY` (Bearer token for `POST /api/tasks` auth)
+**Optional secrets:** `TZ` (IANA timezone, e.g. `America/Argentina/Buenos_Aires`) for relative-date resolution in intent extraction
+**Note:** Cloudflare Workers AI is **not** used (NID-465 locked decision: quota error 4006, cost must stay $0). There is no `[ai]` binding; intent extraction calls Groq over plain `fetch()` (see §2).
 
 ---
 
@@ -133,10 +134,7 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 
 ### Test Suite (`npm test` / `vitest run`)
 - **File:** `test/intents.test.js`
-- **Tests:** 3 passing
-  1. `should extract title from simple transcript` — mocks `env.AI.run` returning structured JSON
-  2. `should fallback on LLM failure` — mocks `env.AI.run` throwing; verifies heuristic fallback
-  3. `should handle vague input` — mocks LLM returning minimal JSON
+- **Tests:** 27 (26 unit + 1 live smoke gated on `GROQ_API_KEY` being set): 10 English transcripts, 5 Spanish transcripts, error/fallback cases (timeout, non-200, invalid JSON, title truncation, missing fields, priority clamp, surrogate-pair safety), API verification (auth header, JSON mode, system-prompt TZ/date injection), and one live smoke test that asserts a real LLM call resolves "tomorrow" to a non-null date
 - **Coverage:** Only `extractIntent` is tested. No tests for `transcribe.js`, `store.js`, `session.js`, or HTTP routes.
 - **Benchmark file:** `benchmark_results.json` exists but is empty (`{"tests":[],"summary":{}}`)
 
@@ -167,7 +165,7 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 | **Task List/Filter API** | **Missing** | No `GET /api/tasks` with query params (status, category, parent, etc.). |
 | **UI (minimal single-hue, reduced-motion, real form controls)** | **Missing** | No frontend code in this repo. |
 | **Jarvis Bridge (LLM tool `timon_create_task`)** | **Missing** | Apollo worker should call Timon over HTTP with text. Timon needs text-in endpoint. |
-| **DeepSeek via OpenRouter for intents** | **Missing** | Code references Cloudflare Workers AI (Llama-2-7b) but no `[ai]` binding exists, so the LLM call is dead code — intents are currently 100% heuristic. Locked decision (NID-465) says DeepSeek via OpenRouter (apollo calls Groq STT → DeepSeek → Timon). Stage 3 must wire a working LLM, not replace an active one. |
+| **LLM intent extraction** | **Wired (NID-469)** | `src/lib/intents.js` now calls Groq chat completions (`qwen/qwen3.8-27b`, JSON mode, same `GROQ_API_KEY` as STT) over `fetch()`. NID-465's DeepSeek-via-OpenRouter alternative remains a fallback if Groq JSON output proves unreliable, per the NID-469 decision. |
 
 ---
 

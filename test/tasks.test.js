@@ -1,9 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 function makeEnv(overrides = {}) {
   const tasks = [];
   const mockDB = {
     prepare: vi.fn(() => ({
+      run: vi.fn(async () => {}),
+      all: vi.fn(async () => ({ results: [] })),
       bind: vi.fn(() => ({
         run: vi.fn(async () => {}),
         first: vi.fn(async () => null),
@@ -45,8 +47,15 @@ describe('POST /api/tasks', () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] }), { status: 200 });
+    }));
     const mod = await import('../src/index.js');
     worker = mod.default;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('should return 401 without valid API key', async () => {
@@ -146,6 +155,7 @@ describe('POST /api/tasks', () => {
     const bindFn = vi.fn(() => chainable);
     env.TIMON_META.prepare = vi.fn(() => ({
       run: vi.fn(async () => {}),
+      all: vi.fn(async () => ({ results: [] })),
       bind: bindFn,
     }));
 
@@ -178,6 +188,7 @@ describe('POST /api/tasks', () => {
     });
     env.TIMON_META.prepare = vi.fn(() => ({
       run: vi.fn(async () => {}),
+      all: vi.fn(async () => ({ results: [] })),
       bind: bindFn,
     }));
 
@@ -221,6 +232,7 @@ describe('POST /api/tasks', () => {
     });
     env.TIMON_META.prepare = vi.fn(() => ({
       run: vi.fn(async () => {}),
+      all: vi.fn(async () => ({ results: [] })),
       bind: bindFn,
     }));
 
@@ -274,6 +286,7 @@ describe('POST /api/tasks', () => {
     });
     env.TIMON_META.prepare = vi.fn(() => ({
       run: vi.fn(async () => {}),
+      all: vi.fn(async () => ({ results: [] })),
       bind: bindFn,
     }));
 
@@ -294,6 +307,7 @@ describe('POST /api/tasks', () => {
     // ensureSchema calls db.prepare(sql).run(), so prepare must expose run.
     env.TIMON_META.prepare = vi.fn(() => ({
       run: vi.fn(async () => {}),
+      all: vi.fn(async () => ({ results: [] })),
       bind: vi.fn(() => ({
         run: vi.fn(async () => {}),
         first: vi.fn(async () => null),

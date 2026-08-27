@@ -78,7 +78,8 @@ async function handleVoice(request, env) {
 
   const db = env.TIMON_META;
   await ensureSchema(db);
-  const taskId = await createTask(db, intent);
+  const deviceId = request.headers.get("x-device-id") || null;
+  const taskId = await createTask(db, intent, "owner", deviceId);
 
   const sessionId = request.headers.get("x-session-id") || "default";
   const id = env.SESSION.idFromName(sessionId);
