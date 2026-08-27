@@ -245,4 +245,67 @@ describe('POST /api/tasks', () => {
     const data = await response.json();
     expect(data.error).toBe('invalid_ts');
   });
+
+  it('should override priority and category from the body', async () => {
+    const env = makeEnv();
+    let capturedTaskArgs = null;
+
+    const mockTask = {
+      id: 'mock-task-id',
+      title: 'buy milk',
+      parent_id: null,
+      due_date: null,
+      priority: 'high',
+      category: 'shopping',
+      created_at: 'now',
+      updated_at: 'now',
+    };
+    const chainable = {
+      run: vi.fn(async () => {}),
+      first: vi.fn(async () => mockTask),
+      all: vi.fn(async () => ({ results: [] })),
+    };
+    const bindFn = vi.fn((...args) => {
+      // tasks INSERT binds (id, title, parent_id, due_date, priority,
+      // category, created_at, updated_at) — priority is arg index 4,
+      // category is arg index 5.
+      if (args.length === 8) capturedTaskArgs = args;
+      return chainable;
+    });
+    env.TIMON_META.prepare = vi.fn(() => ({
+      run: vi.fn(async () => {}),
+      bind: bindFn,
+    }));
+
+    const request = makeRequest(
+      { text: 'buy milk', priority: 'high', category: 'shopping' },
+      env
+    );
+
+    const response = await worker.fetch(request, env);
+
+    expect(response.status).toBe(201);
+    expect(capturedTaskArgs[4]).toBe('high');
+    expect(capturedTaskArgs[5]).toBe('shopping');
+  });
+
+  it('should return 400 on an invalid priority', async () => {
+    const env = makeEnv();
+    // ensureSchema calls db.prepare(sql).run(), so prepare must expose run.
+    env.TIMON_META.prepare = vi.fn(() => ({
+      run: vi.fn(async () => {}),
+      bind: vi.fn(() => ({
+        run: vi.fn(async () => {}),
+        first: vi.fn(async () => null),
+        all: vi.fn(async () => ({ results: [] })),
+      })),
+    }));
+    const request = makeRequest({ text: 'buy milk', priority: 'urgent' }, env);
+
+    const response = await worker.fetch(request, env);
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe('invalid_priority');
+  });
 });

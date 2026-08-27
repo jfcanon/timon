@@ -123,7 +123,7 @@ async function handleCreateTask(request, env) {
     });
   }
 
-  const { text, device_id, ts } = body;
+  const { text, device_id, ts, priority, category } = body;
   if (!text || typeof text !== "string" || text.trim() === "") {
     return new Response(JSON.stringify({ error: "text_required" }), {
       status: 400,
@@ -152,6 +152,25 @@ async function handleCreateTask(request, env) {
 
   const intent = await extractIntent(text.trim(), env);
   if (dueDate) intent.date = dueDate;
+  // Explicit contract values override the LLM's extraction (owner decision, NID-470).
+  if (priority !== undefined && priority !== null && priority !== "") {
+    if (!["high", "medium", "low"].includes(priority)) {
+      return new Response(JSON.stringify({ error: "invalid_priority" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    intent.priority = priority;
+  }
+  if (category !== undefined && category !== null) {
+    if (typeof category !== "string") {
+      return new Response(JSON.stringify({ error: "invalid_category" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    intent.category = category;
+  }
   const taskId = await createTask(db, intent, "owner", device_id || null);
 
   const sessionId = request.headers.get("x-session-id") || "default";
