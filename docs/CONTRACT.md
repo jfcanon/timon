@@ -124,7 +124,6 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 # GROQ_API_KEY is a secret, NOT in [vars]
 ```
 
-<<<<<<< HEAD
 **Required secrets:** `GROQ_API_KEY` (Groq key, shared by Whisper STT and intent extraction), `TIMON_API_KEY` (Bearer token for `POST /api/tasks` auth)
 **Optional secrets:** `TZ` (IANA timezone, e.g. `America/Argentina/Buenos_Aires`) for relative-date resolution in intent extraction
 **Note:** Cloudflare Workers AI is **not** used (NID-465 locked decision: quota error 4006, cost must stay $0). There is no `[ai]` binding; intent extraction calls Groq over plain `fetch()` (see §2).

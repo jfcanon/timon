@@ -81,7 +81,9 @@ export async function createTask(db, intent, userId = "owner", deviceId = null) 
     )
     .run();
 
-  const eventData = { ...intent, device_id: deviceId };
+  const eventData = { ...intent };
+  if (deviceId) eventData.device_id = deviceId;
+
   await db
     .prepare(
       `
