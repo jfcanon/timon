@@ -1,16 +1,51 @@
 import { transcribeAudio } from "./lib/transcribe.js";
 import { extractIntent } from "./lib/intents.js";
-import { createTask, ensureSchema, getTaskWithContext } from "./lib/store.js";
+import {
+  createTask,
+  ensureSchema,
+  getTaskWithContext,
+  listTasks,
+  updateTask,
+  deleteTask,
+} from "./lib/store.js";
 import { SessionDO } from "./durable-objects/session.js";
 
 export { SessionDO };
+
+function verifyApiKey(request, env) {
+  const auth = request.headers.get("authorization") || "";
+  if (!auth.startsWith("Bearer ")) return false;
+  const token = auth.slice(7);
+  return token === env.TIMON_API_KEY;
+}
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/healthz") {
+      return new Response(
+        JSON.stringify({ status: "ok", service: "timon-worker" }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    }
+
+    if (!verifyApiKey(request, env)) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     if (url.pathname === "/api/voice" && request.method === "POST") {
       return handleVoice(request, env);
+    }
+
+    if (url.pathname === "/api/tasks" && request.method === "GET") {
+      return handleListTasks(url, env);
     }
 
     if (url.pathname === "/api/tasks" && request.method === "POST") {
@@ -21,19 +56,18 @@ export default {
       return handleWebSocketConnect(request, env);
     }
 
-    if (url.pathname.startsWith("/api/tasks/") && request.method === "GET") {
-      const taskId = url.pathname.split("/api/tasks/")[1];
-      return handleGetTask(taskId, env);
-    }
-
-    if (url.pathname === "/healthz") {
-      return new Response(
-        JSON.stringify({ status: "ok", service: "timon-worker" }),
-        {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }
-      );
+    const taskMatch = url.pathname.match(/^\/api\/tasks\/(.+)$/);
+    if (taskMatch) {
+      const taskId = taskMatch[1];
+      if (request.method === "GET") {
+        return handleGetTask(taskId, env);
+      }
+      if (request.method === "PATCH") {
+        return handlePatchTask(request, taskId, env);
+      }
+      if (request.method === "DELETE") {
+        return handleDeleteTask(taskId, env);
+      }
     }
 
     return new Response("Not found", { status: 404 });
@@ -99,21 +133,7 @@ async function handleVoice(request, env) {
   );
 }
 
-function verifyApiKey(request, env) {
-  const auth = request.headers.get("authorization") || "";
-  if (!auth.startsWith("Bearer ")) return false;
-  const token = auth.slice(7);
-  return token === env.TIMON_API_KEY;
-}
-
 async function handleCreateTask(request, env) {
-  if (!verifyApiKey(request, env)) {
-    return new Response(JSON.stringify({ error: "unauthorized" }), {
-      status: 401,
-      headers: { "content-type": "application/json" },
-    });
-  }
-
   let body;
   try {
     body = await request.json();
@@ -206,6 +226,125 @@ async function handleGetTask(taskId, env) {
   }
 
   return new Response(JSON.stringify(context), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function handleListTasks(url, env) {
+  const db = env.TIMON_META;
+  await ensureSchema(db);
+
+  const status = url.searchParams.get("status") || undefined;
+  const category = url.searchParams.get("category") || undefined;
+  const parentIdParam = url.searchParams.get("parent_id");
+
+  let parentId;
+  if (parentIdParam === "null") {
+    parentId = null;
+  } else if (parentIdParam !== undefined && parentIdParam !== null) {
+    parentId = parentIdParam;
+  }
+
+  const tasks = await listTasks(db, {
+    status,
+    category,
+    parent_id: parentId,
+  });
+
+  return new Response(JSON.stringify({ tasks }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function handlePatchTask(request, taskId, env) {
+  const db = env.TIMON_META;
+  await ensureSchema(db);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  if (body.status !== undefined) {
+    if (!["pending", "in_progress", "done", "cancelled"].includes(body.status)) {
+      return new Response(JSON.stringify({ error: "invalid_status" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+  }
+
+  if (body.priority !== undefined) {
+    if (!["high", "medium", "low"].includes(body.priority)) {
+      return new Response(JSON.stringify({ error: "invalid_priority" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+  }
+
+  const existing = await db
+    .prepare(`SELECT id FROM tasks WHERE id = ?`)
+    .bind(taskId)
+    .first();
+  if (!existing) {
+    return new Response(JSON.stringify({ error: "task_not_found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const updates = {};
+  for (const key of ["title", "parent_id", "due_date", "priority", "category", "status"]) {
+    if (body[key] !== undefined) {
+      updates[key] = body[key];
+    }
+  }
+
+  if (body.status === "done") {
+    updates.completed_at = new Date().toISOString();
+  } else if (body.status !== undefined && body.status !== "done") {
+    updates.completed_at = null;
+  }
+
+  await updateTask(db, taskId, updates);
+
+  const task = await db
+    .prepare(`SELECT * FROM tasks WHERE id = ?`)
+    .bind(taskId)
+    .first();
+
+  return new Response(JSON.stringify({ task }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function handleDeleteTask(taskId, env) {
+  const db = env.TIMON_META;
+  await ensureSchema(db);
+
+  const existing = await db
+    .prepare(`SELECT id FROM tasks WHERE id = ?`)
+    .bind(taskId)
+    .first();
+  if (!existing) {
+    return new Response(JSON.stringify({ error: "task_not_found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  await deleteTask(db, taskId);
+
+  return new Response(JSON.stringify({ deleted: taskId }), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
