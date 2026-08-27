@@ -6,4 +6,12 @@ export default defineConfig({
     environment: "node",
     include: ["test/**/*.test.js"],
   },
+  resolve: {
+    alias: {
+      "cloudflare:workers": new URL(
+        "./test/__mocks__/cloudflare-workers.js",
+        import.meta.url
+      ).pathname,
+    },
+  },
 });

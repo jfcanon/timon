@@ -13,6 +13,7 @@ All routes defined in `src/index.js`:
 |--------|------|------|--------------|---------------------|
 | GET | `/healthz` | None | — | `{ "status": "ok", "service": "timon-worker" }` |
 | POST | `/api/voice` | None (session via `x-session-id` header) | `multipart/form-data` with `audio` file **OR** raw `audio/wav` body | `{ "task_id": "uuid", "intent": { "title": "string", "date": "ISO8601|null", "priority": "high\|medium\|low", "category": "string|null", "tags": "string[]" }, "transcription": "string" }` |
+| POST | `/api/tasks` | `Authorization: Bearer <TIMON_API_KEY>` | `{ "text": "string (required)", "device_id": "string (optional)", "ts": "ISO8601 (optional)" }` | `{ "task_id": "uuid", "task": { ... }, "status": "created" }` (201) |
 | GET | `/api/tasks/:taskId` | None | — | `{ "task": { "id": "uuid", "title": "string", "parent_id": "uuid|null", "due_date": "ISO8601|null", "priority": "string", "category": "string|null", "created_at": "ISO8601", "updated_at": "ISO8601" }, "parent": "task|null", "siblings": "task[]", "subtasks": "task[]", "blockers": "task[]" }` |
 | GET | `/api/ws` | None (session via `x-session-id` header) | WebSocket upgrade | WebSocket connection to `SessionDO` |
 | * | * | — | — | `{ "status": 404, "body": "Not found" }` |
@@ -123,7 +124,8 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 # GROQ_API_KEY is a secret, NOT in [vars]
 ```
 
-**Required secrets:** `GROQ_API_KEY` (Groq key, shared by Whisper STT and intent extraction)
+<<<<<<< HEAD
+**Required secrets:** `GROQ_API_KEY` (Groq key, shared by Whisper STT and intent extraction), `TIMON_API_KEY` (Bearer token for `POST /api/tasks` auth)
 **Optional secrets:** `TZ` (IANA timezone, e.g. `America/Argentina/Buenos_Aires`) for relative-date resolution in intent extraction
 **Note:** Cloudflare Workers AI is **not** used (NID-465 locked decision: quota error 4006, cost must stay $0). There is no `[ai]` binding; intent extraction calls Groq over plain `fetch()` (see §2).
 
@@ -168,18 +170,18 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 
 ---
 
-## 6. Proposed `POST /api/tasks` Contract (Stage 3 Jarvis Bridge)
+## 6. `POST /api/tasks` Contract (NID-470 — Implemented)
 
 ### Request
 ```http
 POST /api/tasks
 Content-Type: application/json
-x-device-id: <string>  # optional, for device correlation
+Authorization: Bearer <TIMON_API_KEY>
 
 {
   "text": "buy milk tomorrow",           # required, natural language
-  "device_id": "esp32-jarvis-01",        # optional, from header or body
-  "ts": "2026-08-26T14:30:00.000Z"       # optional, ISO 8601; server uses now if absent
+  "device_id": "esp32-jarvis-01",        # optional, stored in task_events
+  "ts": "2026-08-26T14:30:00.000Z"       # optional, ISO 8601; becomes the task due_date when present
 }
 ```
 
@@ -203,13 +205,17 @@ x-device-id: <string>  # optional, for device correlation
 
 ### Error Responses
 - `400 { "error": "text_required" }` — missing `text`
+- `400 { "error": "invalid_ts" }` — `ts` present but not a valid ISO 8601 date
 - `400 { "error": "intent_extraction_failed", "message": "..." }` — LLM failure (fallback still creates task)
 - `500 { "error": "internal_error" }` — DB or unexpected failure
 
 ### Implementation Notes
 - Reuse `extractIntent(text, env)` → `createTask(db, intent)` → `SessionDO.addTask(taskId, intent)`
-- Return the same shape as `/api/voice` but without `transcription` field
-- `device_id` stored in `task_events.data` for audit correlation (extend `createTask` to accept optional `deviceId`)
+- Returns `{task_id, task, status:"created"}` with HTTP 201
+- Auth: `Authorization: Bearer <TIMON_API_KEY>` — 401 on bad/missing key
+- Validation: 400 on empty/missing `text`, 400 on invalid JSON
+- `device_id` stored in `task_events.data` for audit correlation
+- Fail fast: no retries, no retry loops
 
 ---
 
