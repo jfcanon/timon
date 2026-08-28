@@ -1,0 +1,3 @@
+flask
+mlx-whisper ; sys_platform == "darwin"
+faster-whisper
