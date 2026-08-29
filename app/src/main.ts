@@ -1,100 +1,126 @@
-// Timon app — browser auth flow (NID-526)
+// Timon web app — shell, router and session gate (NID-527).
 //
-// The browser has no Bearer key. It proves identity with an HttpOnly session
-// cookie obtained from POST /api/auth/login. Every fetch to the gated API goes
-// with `credentials: "same-origin"` so the cookie rides along; a 401 means the
-// session is missing/expired and we drop back to the login view.
+// Two routes, both server-safe: `/` (list) and `/t/:id` (context). The Worker
+// serves the shell for any non-/api path (`not_found_handling =
+// single-page-application`), so a deep link into a task survives a refresh.
 
-const loginView = document.getElementById("login-view") as HTMLElement;
-const appView = document.getElementById("app-view") as HTMLElement;
-const loginForm = document.getElementById("login-form") as HTMLFormElement;
-const loginError = document.getElementById("login-error") as HTMLElement;
-const passwordInput = document.getElementById("password") as HTMLInputElement;
-const logoutButton = document.getElementById("logout-button") as HTMLButtonElement;
+import "./styles.css";
+import { clear, el } from "./dom";
+import { renderContext } from "./views/context";
+import { renderList } from "./views/list";
+import { renderLogin, signOut } from "./views/auth";
+import { offlineBanner } from "./views/states";
+import type { ListFilters } from "./api";
 
-function showLogin(message?: string): void {
-  appView.hidden = true;
-  loginView.hidden = false;
-  if (message) {
-    loginError.textContent = message;
-    loginError.hidden = false;
-  } else {
-    loginError.hidden = true;
-    loginError.textContent = "";
-  }
-  passwordInput.focus();
-}
+const page = document.getElementById("page") as HTMLElement;
+const main = document.getElementById("main") as HTMLElement;
+const mastheadSlot = document.getElementById("masthead") as HTMLElement;
+const bannerSlot = document.getElementById("banner") as HTMLElement;
 
-function showApp(): void {
-  loginView.hidden = true;
-  loginError.hidden = true;
-  appView.hidden = false;
-}
+let filters: ListFilters = {};
 
-// Probe the gated API with the session cookie. Only an explicit 200 means we
-// hold a valid session; anything else (401, 404, network error) means we must
-// show the login view.
-async function checkAuth(): Promise<boolean> {
-  const res = await fetch("/api/tasks", {
-    method: "GET",
-    headers: { accept: "application/json" },
-    credentials: "same-origin",
-  });
-  return res.status === 200;
-}
-
-loginForm.addEventListener("submit", async (event: SubmitEvent) => {
-  event.preventDefault();
-  const password = passwordInput.value;
-  loginError.hidden = true;
-
-  let res: Response;
+function contextIdFromPath(pathname: string): string | null {
+  const match = pathname.match(/^\/t\/(.+)$/);
+  if (!match) return null;
   try {
-    res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({ password }),
-    });
+    return decodeURIComponent(match[1]);
   } catch {
-    showLogin("Network error. Please try again.");
+    // A truncated or malformed escape (/t/abc%) throws URIError. The shell is
+    // served for any non-/api path, so an unguarded throw here would leave the
+    // page blank with no way back. Pass the raw segment through instead and
+    // let the API answer 404, which the view already renders as a real state.
+    return match[1];
+  }
+}
+
+function navigate(href: string): void {
+  if (href === location.pathname + location.search) return;
+  history.pushState({}, "", href);
+  route();
+}
+
+function showLogin(message: string | null = null): void {
+  clear(mastheadSlot);
+  renderLogin(main, message, () => {
+    history.replaceState({}, "", "/");
+    filters = {};
+    route();
+  });
+}
+
+function masthead(): void {
+  clear(mastheadSlot);
+
+  const logoutButton = el("button", { type: "button", class: "btn btn--quiet" }, [
+    "Salir",
+  ]);
+  logoutButton.addEventListener("click", () => {
+    logoutButton.disabled = true;
+    void signOut().then(() => showLogin());
+  });
+
+  mastheadSlot.append(
+    el("header", { class: "masthead" }, [
+      el("p", { class: "wordmark" }, ["Timon"]),
+      el("div", { class: "masthead__meta" }, [
+        el("a", { class: "btn btn--quiet", href: "/", "data-route": "" }, [
+          "Tareas",
+        ]),
+        logoutButton,
+      ]),
+    ])
+  );
+}
+
+function route(): void {
+  masthead();
+  const id = contextIdFromPath(location.pathname);
+  if (id) {
+    renderContext(main, id, () => showLogin("Tu sesión expiró."));
     return;
   }
-
-  if (res.status === 200) {
-    passwordInput.value = "";
-    showApp();
-  } else if (res.status === 401) {
-    showLogin("Incorrect password.");
-  } else {
-    showLogin("Sign-in is unavailable right now.");
-  }
-});
-
-logoutButton.addEventListener("click", async () => {
-  try {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      credentials: "same-origin",
-    });
-  } catch {
-    // Swallow — we redirect to login regardless.
-  }
-  showLogin();
-});
-
-async function init(): Promise<void> {
-  let authed = false;
-  try {
-    authed = await checkAuth();
-  } catch {
-    authed = false;
-  }
-  if (authed) {
-    showApp();
-  } else {
-    showLogin();
-  }
+  renderList(
+    main,
+    filters,
+    (next) => {
+      filters = next;
+      route();
+    },
+    () => showLogin("Tu sesión expiró.")
+  );
 }
 
-void init();
+// Intercept in-app links so the views never trigger a full reload.
+page.addEventListener("click", (event) => {
+  const target = (event.target as HTMLElement | null)?.closest<HTMLAnchorElement>(
+    "a[data-route]"
+  );
+  if (!target) return;
+  if (event.defaultPrevented || event.button !== 0) return;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  navigate(target.getAttribute("href") ?? "/");
+});
+
+window.addEventListener("popstate", () => route());
+
+function syncConnectivity(): void {
+  clear(bannerSlot);
+  if (!navigator.onLine) bannerSlot.append(offlineBanner());
+}
+
+window.addEventListener("online", () => {
+  syncConnectivity();
+  route();
+});
+window.addEventListener("offline", syncConnectivity);
+
+// No separate session probe: both views already fetch the gated API and both
+// route a 401 to the login screen. Probing first would double every page load
+// and, on a large list, double the work the Worker does to answer it.
+function start(): void {
+  syncConnectivity();
+  route();
+}
+
+start();

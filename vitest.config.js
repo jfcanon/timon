@@ -4,7 +4,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: ["test/**/*.test.js"],
+    // Worker tests plus the app's pure presentation logic, so one
+    // `bun run test` covers both halves in CI.
+    include: ["test/**/*.test.js", "app/src/**/*.test.ts"],
   },
   resolve: {
     alias: {

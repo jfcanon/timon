@@ -17,6 +17,7 @@ function createMockD1() {
     task_events: ['id', 'ts', 'task_id', 'event_type', 'data'],
     dependencies: ['id', 'task_id', 'depends_on_id', 'created_at'],
   };
+  const columnDefaults = {};
 
   function matchRow(row, conditions, params) {
     const p = [...params];
@@ -82,10 +83,13 @@ function createMockD1() {
     }
 
     if (/ALTER TABLE/i.test(sql)) {
-      const m = sql.match(/ALTER TABLE (\w+) ADD COLUMN (\w+)/i);
+      const m = sql.match(/ALTER TABLE (\w+) ADD COLUMN (\w+)(?: \w+)?(?: DEFAULT '([^']*)')?/i);
       if (m && tableColumns[m[1]] && !tableColumns[m[1]].includes(m[2])) {
         tableColumns[m[1]].push(m[2]);
-        store[m[1]].forEach(r => { r[m[2]] = null; });
+        // SQLite backfills existing rows with the column DEFAULT, not NULL.
+        const def = m[3] !== undefined ? m[3] : null;
+        columnDefaults[`${m[1]}.${m[2]}`] = def;
+        store[m[1]].forEach(r => { r[m[2]] = def; });
       }
       return {};
     }
@@ -95,6 +99,10 @@ function createMockD1() {
       const cols = m[2].split(',').map(c => c.trim());
       const row = {};
       cols.forEach((c, i) => { row[c] = p[i] !== undefined ? p[i] : null; });
+      // Columns omitted from the INSERT take their declared DEFAULT.
+      for (const c of tableColumns[m[1]] || []) {
+        if (!(c in row)) row[c] = columnDefaults[`${m[1]}.${c}`] ?? null;
+      }
       store[m[1]].push(row);
       return {};
     }
@@ -368,5 +376,58 @@ describe('listTasks', () => {
     await createTask(db, { title: 'A' });
     await createTask(db, { title: 'B' });
     expect((await listTasks(db)).length).toBe(2);
+  });
+
+  it('should expose parent_title and named blockers, not just counts', async () => {
+    await ensureSchema(db);
+    const pid = await createTask(db, { title: 'Pintar el living' });
+    const cid = await createTask(db, { title: 'Elegir el color', parent_id: pid });
+    const bid = await createTask(db, { title: 'Comprar la pintura' });
+    await addDependency(db, cid, bid);
+
+    const rows = await listTasks(db);
+    const child = rows.find(r => r.id === cid);
+    const parent = rows.find(r => r.id === pid);
+
+    expect(child.parent_title).toBe('Pintar el living');
+    expect(child.blocked_by).toEqual([
+      { id: bid, title: 'Comprar la pintura', status: 'pending' },
+    ]);
+    expect(child.blocked_by_count).toBe(1);
+    expect(parent.parent_title).toBeNull();
+    expect(parent.subtask_count).toBe(1);
+  });
+
+  // Regression: the previous implementation decorated the list with
+  // `WHERE id IN (?, ?, …)` built from every returned id. D1 caps a query at
+  // 100 bound parameters, so `GET /api/tasks` threw a 1101 on the live worker
+  // as soon as the table passed 100 rows. No query may bind more than 100.
+  it('should not exceed D1 100-bound-parameter cap with 150 tasks', async () => {
+    await ensureSchema(db);
+
+    const maxBound = { count: 0, sql: '' };
+    const realPrepare = db.prepare;
+    db.prepare = (sql) => {
+      const stmt = realPrepare(sql);
+      const realBind = stmt.bind;
+      stmt.bind = (...args) => {
+        if (args.length > maxBound.count) {
+          maxBound.count = args.length;
+          maxBound.sql = sql.replace(/\s+/g, ' ').trim().slice(0, 80);
+        }
+        return realBind(...args);
+      };
+      return stmt;
+    };
+
+    for (let i = 0; i < 150; i++) {
+      await createTask(db, { title: `Tarea ${i}` });
+    }
+    maxBound.count = 0;
+
+    const rows = await listTasks(db);
+
+    expect(rows.length).toBe(150);
+    expect(maxBound.count).toBeLessThanOrEqual(100);
   });
 });

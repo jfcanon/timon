@@ -350,35 +350,55 @@ export async function listTasks(db, { status, category, parent_id } = {}) {
 
   if (tasks.length === 0) return [];
 
-  const taskIds = tasks.map((t) => t.id);
-  const placeholders = taskIds.map(() => "?").join(",");
+  return decorateTasks(db, tasks);
+}
 
-  const subtaskCounts = await db
-    .prepare(
-      `SELECT parent_id, COUNT(*) as cnt FROM tasks WHERE parent_id IN (${placeholders}) GROUP BY parent_id`
-    )
-    .bind(...taskIds)
-    .all();
+// Decoration adds the context a list card needs without a second round-trip:
+// the parent's title (inline breadcrumb), how many subtasks hang off the row,
+// and WHICH tasks block it — not just how many.
+//
+// ⚠ Both lookups take ZERO bound parameters on purpose. The previous version
+// built `WHERE id IN (?, ?, …)` from the result ids, and D1 caps a query at
+// **100 bound parameters** — so `GET /api/tasks` started throwing a 1101 the
+// moment the table passed 100 rows (verified live 2026-08-29: unfiltered and
+// `?status=pending` both 500, `?status=done` with 0 rows returned fine).
+// Reading the two small index tables whole and aggregating in JS cannot break
+// on size again.
+async function decorateTasks(db, tasks) {
+  const indexRows =
+    (await db.prepare(`SELECT id, title, parent_id, status FROM tasks`).all())
+      .results || [];
+  const depRows =
+    (await db.prepare(`SELECT task_id, depends_on_id FROM dependencies`).all())
+      .results || [];
 
-  const blockedCounts = await db
-    .prepare(
-      `SELECT task_id, COUNT(*) as cnt FROM dependencies WHERE task_id IN (${placeholders}) GROUP BY task_id`
-    )
-    .bind(...taskIds)
-    .all();
-
-  const subtaskMap = {};
-  for (const row of subtaskCounts.results || []) {
-    subtaskMap[row.parent_id] = row.cnt;
+  const byId = new Map();
+  const subtaskCounts = new Map();
+  for (const row of indexRows) {
+    byId.set(row.id, row);
+    if (row.parent_id) {
+      subtaskCounts.set(row.parent_id, (subtaskCounts.get(row.parent_id) || 0) + 1);
+    }
   }
-  const blockedMap = {};
-  for (const row of blockedCounts.results || []) {
-    blockedMap[row.task_id] = row.cnt;
+
+  const blockersByTask = new Map();
+  for (const dep of depRows) {
+    const blocker = byId.get(dep.depends_on_id);
+    if (!blocker) continue; // dangling edge — the blocker row is gone
+    const list = blockersByTask.get(dep.task_id) || [];
+    list.push({ id: blocker.id, title: blocker.title, status: blocker.status || null });
+    blockersByTask.set(dep.task_id, list);
   }
 
-  return tasks.map((task) => ({
-    ...task,
-    subtask_count: subtaskMap[task.id] || 0,
-    blocked_by_count: blockedMap[task.id] || 0,
-  }));
+  return tasks.map((task) => {
+    const blockedBy = blockersByTask.get(task.id) || [];
+    const parent = task.parent_id ? byId.get(task.parent_id) : null;
+    return {
+      ...task,
+      parent_title: parent ? parent.title : null,
+      subtask_count: subtaskCounts.get(task.id) || 0,
+      blocked_by: blockedBy,
+      blocked_by_count: blockedBy.length,
+    };
+  });
 }

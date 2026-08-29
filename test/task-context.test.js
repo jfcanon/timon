@@ -364,44 +364,40 @@ describe("GET /api/tasks (list)", () => {
       },
     ];
 
-    const mockSubtaskCounts = [{ parent_id: "task-1", cnt: 1 }];
-    const mockBlockedCounts = [{ task_id: "task-1", cnt: 1 }];
+    // The decoration lookups take no bound parameters — they read the two
+    // small index tables whole (see decorateTasks in src/lib/store.js).
+    const mockIndexRows = [
+      { id: "task-1", title: "Goal", parent_id: null, status: "pending" },
+      { id: "task-2", title: "Prerequisite", parent_id: "task-1", status: "pending" },
+      { id: "task-3", title: "Buy the paint", parent_id: null, status: "pending" },
+    ];
+    const mockDepRows = [{ task_id: "task-1", depends_on_id: "task-3" }];
 
-    let callCount = 0;
     env.TIMON_META.prepare = vi.fn((sql) => {
-      const chainable = {
+      const empty = () => ({
         run: vi.fn(async () => {}),
+        first: vi.fn(async () => null),
         all: vi.fn(async () => ({ results: [] })),
-        bind: vi.fn((...args) => {
-          if (sql.includes("SELECT * FROM tasks WHERE 1=1")) {
-            return {
-              run: vi.fn(async () => {}),
-              first: vi.fn(async () => null),
-              all: vi.fn(async () => ({ results: mockTasks })),
-            };
-          }
-          if (sql.includes("parent_id IN")) {
-            return {
-              run: vi.fn(async () => {}),
-              first: vi.fn(async () => null),
-              all: vi.fn(async () => ({ results: mockSubtaskCounts })),
-            };
-          }
-          if (sql.includes("task_id IN")) {
-            return {
-              run: vi.fn(async () => {}),
-              first: vi.fn(async () => null),
-              all: vi.fn(async () => ({ results: mockBlockedCounts })),
-            };
-          }
-          return {
-            run: vi.fn(async () => {}),
-            first: vi.fn(async () => null),
-            all: vi.fn(async () => ({ results: [] })),
-          };
+      });
+      const rows = (results) => ({
+        run: vi.fn(async () => {}),
+        first: vi.fn(async () => null),
+        all: vi.fn(async () => ({ results })),
+      });
+
+      if (sql.includes("SELECT id, title, parent_id, status FROM tasks")) {
+        return rows(mockIndexRows);
+      }
+      if (sql.includes("SELECT task_id, depends_on_id FROM dependencies")) {
+        return rows(mockDepRows);
+      }
+      return {
+        ...empty(),
+        bind: vi.fn(() => {
+          if (sql.includes("SELECT * FROM tasks WHERE 1=1")) return rows(mockTasks);
+          return empty();
         }),
       };
-      return chainable;
     });
 
     const request = new Request(
@@ -420,6 +416,14 @@ describe("GET /api/tasks (list)", () => {
     expect(data.tasks[0].blocked_by_count).toBe(1);
     expect(data.tasks[1].subtask_count).toBe(0);
     expect(data.tasks[1].blocked_by_count).toBe(0);
+    // The list card names its blockers, it does not merely count them.
+    expect(data.tasks[0].blocked_by).toEqual([
+      { id: "task-3", title: "Buy the paint", status: "pending" },
+    ]);
+    expect(data.tasks[1].blocked_by).toEqual([]);
+    // …and carries its parent's title for the inline breadcrumb.
+    expect(data.tasks[0].parent_title).toBeNull();
+    expect(data.tasks[1].parent_title).toBe("Goal");
   });
 
   it("should filter by status", async () => {
