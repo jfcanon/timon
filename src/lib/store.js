@@ -362,8 +362,15 @@ export async function listTasks(db, { status, category, parent_id } = {}) {
 // **100 bound parameters** — so `GET /api/tasks` started throwing a 1101 the
 // moment the table passed 100 rows (verified live 2026-08-29: unfiltered and
 // `?status=pending` both 500, `?status=done` with 0 rows returned fine).
-// Reading the two small index tables whole and aggregating in JS cannot break
-// on size again.
+// Reading the small index tables whole and aggregating in JS cannot break on
+// size again.
+//
+// The index read is deliberately NOT skipped when the caller was unfiltered,
+// even though those rows would serve. That shortcut would make correctness
+// depend on "unfiltered result == the whole table" — an invariant the LIMIT +
+// cursor this endpoint still needs would silently break, dropping parents and
+// blockers with no error. Row count remains the next wall to hit here; see the
+// scale note in docs/CONTRACT.md.
 async function decorateTasks(db, tasks) {
   const indexRows =
     (await db.prepare(`SELECT id, title, parent_id, status FROM tasks`).all())
@@ -398,7 +405,19 @@ async function decorateTasks(db, tasks) {
       parent_title: parent ? parent.title : null,
       subtask_count: subtaskCounts.get(task.id) || 0,
       blocked_by: blockedBy,
+      // Two different questions, so two different fields. `blocked_by_count`
+      // is every dependency edge (unchanged, pre-existing semantics);
+      // `blocked_by_open_count` is how many still block, which is what the UI
+      // acts on. A task whose dependencies are all done reports count 2 and
+      // open_count 0 — consumers deciding "can I start this?" want the latter.
       blocked_by_count: blockedBy.length,
+      blocked_by_open_count: blockedBy.filter((b) => !isResolved(b.status))
+        .length,
     };
   });
+}
+
+/** A done or cancelled dependency no longer blocks anything. */
+function isResolved(status) {
+  return status === "done" || status === "cancelled";
 }

@@ -420,6 +420,8 @@ describe("GET /api/tasks (list)", () => {
     expect(data.tasks[0].blocked_by).toEqual([
       { id: "task-3", title: "Buy the paint", status: "pending" },
     ]);
+    // An open blocker counts in both fields.
+    expect(data.tasks[0].blocked_by_open_count).toBe(1);
     expect(data.tasks[1].blocked_by).toEqual([]);
     // …and carries its parent's title for the inline breadcrumb.
     expect(data.tasks[0].parent_title).toBeNull();

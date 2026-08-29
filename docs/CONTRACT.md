@@ -12,14 +12,22 @@ All routes defined in `src/index.js`:
 | Method | Path | Auth | Request Body | Response JSON Shape |
 |--------|------|------|--------------|---------------------|
 | GET | `/healthz` | None | — | `{ "status": "ok", "service": "timon-worker" }` |
-| POST | `/api/voice` | `Authorization: Bearer <TIMON_API_KEY>` | `multipart/form-data` with `audio` file **OR** raw `audio/wav` body | `{ "task_id": "uuid", "intent": { "title": "string", "date": "ISO8601\|null", "priority": "high\|medium\|low", "category": "string\|null", "tags": "string[]" }, "transcription": "string" }` |
-| GET | `/api/tasks` | `Authorization: Bearer <TIMON_API_KEY>` | — (query params: `status`, `category`, `parent_id`) | `{ "tasks": [{ ...task, "parent_title": "string\|null", "subtask_count": "number", "blocked_by_count": "number", "blocked_by": [{ "id": "uuid", "title": "string", "status": "string\|null" }] }] }` |
-| POST | `/api/tasks` | `Authorization: Bearer <TIMON_API_KEY>` | `{ "text": "string (required)", "device_id": "string (optional)", "ts": "ISO8601 (optional)", "priority": "high\|medium\|low (optional)", "category": "string (optional)" }` | `{ "task_id": "uuid", "task": { ... }, "status": "created" }` (201) |
-| GET | `/api/tasks/:taskId` | `Authorization: Bearer <TIMON_API_KEY>` | — | `{ "task": { ... }, "parent": "task\|null", "siblings": "task[]", "subtasks": "task[]", "blockers": "task[]", "blocks": "task[]" }` |
-| PATCH | `/api/tasks/:taskId` | `Authorization: Bearer <TIMON_API_KEY>` | `{ "title": "string (optional)", "status": "pending\|in_progress\|done\|cancelled (optional)", "due_date": "ISO8601\|null (optional)", "priority": "high\|medium\|low (optional)", "category": "string\|null (optional)", "parent_id": "uuid\|null (optional)" }` | `{ "task": { ... } }` |
-| DELETE | `/api/tasks/:taskId` | `Authorization: Bearer <TIMON_API_KEY>` | — | `{ "deleted": "uuid" }` |
-| GET | `/api/ws` | `Authorization: Bearer <TIMON_API_KEY>` | WebSocket upgrade | WebSocket connection to `SessionDO` |
+| POST | `/api/auth/login` | **None** (this is how a browser gets one) | `{ "password": "string" }` | `{ "ok": true }` + `Set-Cookie: timon_session=…; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000`. `401 {"error":"invalid_credentials"}` on a wrong password; **`500 {"error":"auth_unavailable"}` when the `APP_PASSWORD` secret is not set on the Worker** |
+| POST | `/api/auth/logout` | None | — | `{ "ok": true }` + a cleared cookie |
+| POST | `/api/voice` | Bearer **or** cookie ¹ | `multipart/form-data` with `audio` file **OR** raw `audio/wav` body | `{ "task_id": "uuid", "intent": { "title": "string", "date": "ISO8601\|null", "priority": "high\|medium\|low", "category": "string\|null", "tags": "string[]" }, "transcription": "string" }` |
+| GET | `/api/tasks` | Bearer **or** cookie ¹ | — (query params: `status`, `category`, `parent_id`) | `{ "tasks": [{ ...task, "parent_title": "string\|null", "subtask_count": "number", "blocked_by_count": "number", "blocked_by_open_count": "number", "blocked_by": [{ "id": "uuid", "title": "string", "status": "string\|null" }] }] }` ² |
+| POST | `/api/tasks` | Bearer **or** cookie ¹ | `{ "text": "string (required)", "device_id": "string (optional)", "ts": "ISO8601 (optional)", "priority": "high\|medium\|low (optional)", "category": "string (optional)" }` | `{ "task_id": "uuid", "task": { ... }, "status": "created" }` (201) |
+| GET | `/api/tasks/:taskId` | Bearer **or** cookie ¹ | — | `{ "task": { ... }, "parent": "task\|null", "siblings": "task[]", "subtasks": "task[]", "blockers": "task[]", "blocks": "task[]" }` |
+| PATCH | `/api/tasks/:taskId` | Bearer **or** cookie ¹ | `{ "title": "string (optional)", "status": "pending\|in_progress\|done\|cancelled (optional)", "due_date": "ISO8601\|null (optional)", "priority": "high\|medium\|low (optional)", "category": "string\|null (optional)", "parent_id": "uuid\|null (optional)" }` | `{ "task": { ... } }` |
+| DELETE | `/api/tasks/:taskId` | Bearer **or** cookie ¹ | — | `{ "deleted": "uuid" }` |
+| GET | `/api/ws` | Bearer **or** cookie ¹ | WebSocket upgrade | WebSocket connection to `SessionDO` |
 | * | * | — | — | `{ "status": 404, "body": "Not found" }` |
+
+¹ **The gate accepts either credential** (`isAuthorized` in `src/lib/auth.js`, since NID-526): an `Authorization: Bearer <TIMON_API_KEY>` header — the ESP32 / apollo voice path — **or** a valid `timon_session` HttpOnly cookie — the browser. `/api/auth/login` and `/api/auth/logout` sit outside the gate by necessity, since a browser has no Bearer key. The gate is scoped to `/api` and `/api/*`; every other path is served from the static assets binding.
+
+² **Two counts, two meanings — do not use them interchangeably.** `blocked_by_count` is every dependency edge, resolved or not (pre-existing semantics, unchanged). `blocked_by_open_count` excludes blockers whose status is `done` or `cancelled` — this is the one that answers "can I start this?", and it is what the UI acts on. A task whose dependencies are all finished reports `blocked_by_count: 2, blocked_by_open_count: 0`.
+
+⚠ **`GET /api/tasks` has no `LIMIT` and no cursor.** It returns every matching row, and `decorateTasks` additionally reads the `tasks` and `dependencies` index tables whole. This is bounded only by table size (179 rows as of 2026-08-29). Pagination is the next thing this endpoint needs. The previous scale wall here was a hard 500: decoration used to build `WHERE id IN (?, …)` from every result id, and D1 caps a query at 100 bound parameters, so the endpoint threw a 1101 on every unfiltered read once the table passed 100 rows (NID-527).
 
 ### SessionDO Routes (Durable Object `SessionDO`)
 
@@ -138,7 +146,7 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 ### Test Suite (`npm test` / `vitest run`)
 - **File:** `test/intents.test.js`
 - **Tests:** 27 (26 unit + 1 live smoke gated on `GROQ_API_KEY` being set): 10 English transcripts, 5 Spanish transcripts, error/fallback cases (timeout, non-200, invalid JSON, title truncation, missing fields, priority clamp, surrogate-pair safety), API verification (auth header, JSON mode, system-prompt TZ/date injection), and one live smoke test that asserts a real LLM call resolves "tomorrow" to a non-null date
-- **Coverage:** Only `extractIntent` is tested. No tests for `transcribe.js`, `store.js`, `session.js`, or HTTP routes.
+- **Coverage:** 165 passing / 1 skipped across `test/*.test.js` (worker: intents, store, auth, HTTP routes) and `app/src/**/*.test.ts` (app: date/label formatting, list nesting, URL routing, context view). One `bun run test` runs both halves — see `vitest.config.js`. Still untested: `transcribe.js`, `session.js`, and the list/auth view modules.
 - **Benchmark file:** `benchmark_results.json` exists but is empty (`{"tests":[],"summary":{}}`)
 
 ### Corpus (`test/corpus.json`)
@@ -167,7 +175,7 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 | **Task Update API** | **Implemented** | `PATCH /api/tasks/:id` supports title, status, due_date, priority, category, parent_id. |
 | **Task Delete API** | **Implemented** | `DELETE /api/tasks/:id` re-parents children, removes dependencies, deletes task. |
 | **Task List/Filter API** | **Implemented** | `GET /api/tasks` with query params (status, category, parent_id), returns `subtask_count`, `blocked_by_count`, `parent_title` and a named `blocked_by` array (NID-527). |
-| **Auth on all /api/* routes** | **Implemented** | `Authorization: Bearer <TIMON_API_KEY>` required on all /api/* routes. |
+| **Auth on all /api/\* routes** | **Implemented** | `isAuthorized` gates `/api` and `/api/*`: Bearer key (device) **or** `timon_session` cookie (browser). `/api/auth/login` and `/api/auth/logout` are outside the gate by design. ⚠ **`APP_PASSWORD` is not set on the deployed Worker as of 2026-08-29**, so `/api/auth/login` returns 500 and no browser can obtain a session; fix is `wrangler secret put APP_PASSWORD` out-of-band (CI is forbidden from setting secrets). |
 | **UI (minimal single-hue, reduced-motion, real form controls)** | **Implemented** | `app/` — Vite + vanilla TS. List view and context-first task view (parent / siblings / subtasks / blockers on one screen, no modal), single-hue instrument tokens, `prefers-reduced-motion`, real `<form>`/`<button>`/`<select>`, strict CSP with no inline styles or scripts (NID-525, NID-526, NID-527). |
 | **Jarvis Bridge (LLM tool `timon_create_task`)** | **Missing** | Apollo worker should call Timon over HTTP with text. Timon needs text-in endpoint. |
 | **LLM intent extraction** | **Wired (NID-469)** | `src/lib/intents.js` now calls Groq chat completions (`qwen/qwen3.8-27b`, JSON mode, same `GROQ_API_KEY` as STT) over `fetch()`. NID-465's DeepSeek-via-OpenRouter alternative remains a fallback if Groq JSON output proves unreliable, per the NID-469 decision. |
@@ -216,7 +224,7 @@ Authorization: Bearer <TIMON_API_KEY>
 ### Implementation Notes
 - Reuse `extractIntent(text, env)` → `createTask(db, intent)` → `SessionDO.addTask(taskId, intent)`
 - Returns `{task_id, task, status:"created"}` with HTTP 201
-- Auth: `Authorization: Bearer <TIMON_API_KEY>` — 401 on bad/missing key
+- Auth: Bearer **or** cookie ¹ — 401 on bad/missing key
 - Validation: 400 on empty/missing `text`, 400 on invalid JSON
 - `device_id` stored in `task_events.data` for audit correlation
 - Fail fast: no retries, no retry loops
