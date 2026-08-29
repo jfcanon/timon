@@ -1,0 +1,10 @@
+flask
+# Apple silicon fast path (Metal, ~0.3-0.4 s warm for 12-word sentence)
+# mlx-audio pins mlx; keep in same venv as whisper when possible.
+mlx-audio ; sys_platform == "darwin"
+# CPU fallback — sherpa-onnx provides CoreML EP + resampling; piper-tts as fallback
+sherpa-onnx ; sys_platform == "darwin"
+piper-tts
+# Resampling for Piper 22.05 -> 24 kHz when sherpa-onnx not used (scipy uses Accelerate on Mac)
+numpy
+scipy ; sys_platform == "darwin"
