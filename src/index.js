@@ -33,44 +33,51 @@ export default {
       );
     }
 
-    if (!verifyApiKey(request, env)) {
-      return new Response(JSON.stringify({ error: "unauthorized" }), {
-        status: 401,
-        headers: { "content-type": "application/json" },
-      });
-    }
-
-    if (url.pathname === "/api/voice" && request.method === "POST") {
-      return handleVoice(request, env);
-    }
-
-    if (url.pathname === "/api/tasks" && request.method === "GET") {
-      return handleListTasks(url, env);
-    }
-
-    if (url.pathname === "/api/tasks" && request.method === "POST") {
-      return handleCreateTask(request, env);
-    }
-
-    if (url.pathname === "/api/ws") {
-      return handleWebSocketConnect(request, env);
-    }
-
-    const taskMatch = url.pathname.match(/^\/api\/tasks\/(.+)$/);
-    if (taskMatch) {
-      const taskId = taskMatch[1];
-      if (request.method === "GET") {
-        return handleGetTask(taskId, env);
+    // Scope auth gate to /api and /api/* only
+    if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+      if (!verifyApiKey(request, env)) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        });
       }
-      if (request.method === "PATCH") {
-        return handlePatchTask(request, taskId, env);
+
+      if (url.pathname === "/api/voice" && request.method === "POST") {
+        return handleVoice(request, env);
       }
-      if (request.method === "DELETE") {
-        return handleDeleteTask(taskId, env);
+
+      if (url.pathname === "/api/tasks" && request.method === "GET") {
+        return handleListTasks(url, env);
       }
+
+      if (url.pathname === "/api/tasks" && request.method === "POST") {
+        return handleCreateTask(request, env);
+      }
+
+      if (url.pathname === "/api/ws") {
+        return handleWebSocketConnect(request, env);
+      }
+
+      const taskMatch = url.pathname.match(/^\/api\/tasks\/(.+)$/);
+      if (taskMatch) {
+        const taskId = taskMatch[1];
+        if (request.method === "GET") {
+          return handleGetTask(taskId, env);
+        }
+        if (request.method === "PATCH") {
+          return handlePatchTask(request, taskId, env);
+        }
+        if (request.method === "DELETE") {
+          return handleDeleteTask(taskId, env);
+        }
+      }
+
+      // Unknown API route — do not fall through to assets
+      return new Response("Not found", { status: 404 });
     }
 
-    return new Response("Not found", { status: 404 });
+    // Non-API paths (SPA deep links, root) → serve app shell from assets
+    return env.ASSETS.fetch(request);
   },
 };
 
