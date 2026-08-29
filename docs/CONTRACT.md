@@ -13,7 +13,7 @@ All routes defined in `src/index.js`:
 |--------|------|------|--------------|---------------------|
 | GET | `/healthz` | None | — | `{ "status": "ok", "service": "timon-worker" }` |
 | POST | `/api/voice` | `Authorization: Bearer <TIMON_API_KEY>` | `multipart/form-data` with `audio` file **OR** raw `audio/wav` body | `{ "task_id": "uuid", "intent": { "title": "string", "date": "ISO8601\|null", "priority": "high\|medium\|low", "category": "string\|null", "tags": "string[]" }, "transcription": "string" }` |
-| GET | `/api/tasks` | `Authorization: Bearer <TIMON_API_KEY>` | — (query params: `status`, `category`, `parent_id`) | `{ "tasks": [{ ...task, "subtask_count": "number", "blocked_by_count": "number" }] }` |
+| GET | `/api/tasks` | `Authorization: Bearer <TIMON_API_KEY>` | — (query params: `status`, `category`, `parent_id`) | `{ "tasks": [{ ...task, "parent_title": "string\|null", "subtask_count": "number", "blocked_by_count": "number", "blocked_by": [{ "id": "uuid", "title": "string", "status": "string\|null" }] }] }` |
 | POST | `/api/tasks` | `Authorization: Bearer <TIMON_API_KEY>` | `{ "text": "string (required)", "device_id": "string (optional)", "ts": "ISO8601 (optional)", "priority": "high\|medium\|low (optional)", "category": "string (optional)" }` | `{ "task_id": "uuid", "task": { ... }, "status": "created" }` (201) |
 | GET | `/api/tasks/:taskId` | `Authorization: Bearer <TIMON_API_KEY>` | — | `{ "task": { ... }, "parent": "task\|null", "siblings": "task[]", "subtasks": "task[]", "blockers": "task[]", "blocks": "task[]" }` |
 | PATCH | `/api/tasks/:taskId` | `Authorization: Bearer <TIMON_API_KEY>` | `{ "title": "string (optional)", "status": "pending\|in_progress\|done\|cancelled (optional)", "due_date": "ISO8601\|null (optional)", "priority": "high\|medium\|low (optional)", "category": "string\|null (optional)", "parent_id": "uuid\|null (optional)" }` | `{ "task": { ... } }` |
@@ -166,9 +166,9 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 | **Task Create API (text-in)** | **Implemented** | `POST /api/tasks` with `{text, device_id, ts, priority, category}`. |
 | **Task Update API** | **Implemented** | `PATCH /api/tasks/:id` supports title, status, due_date, priority, category, parent_id. |
 | **Task Delete API** | **Implemented** | `DELETE /api/tasks/:id` re-parents children, removes dependencies, deletes task. |
-| **Task List/Filter API** | **Implemented** | `GET /api/tasks` with query params (status, category, parent_id), returns subtask_count and blocked_by_count. |
+| **Task List/Filter API** | **Implemented** | `GET /api/tasks` with query params (status, category, parent_id), returns `subtask_count`, `blocked_by_count`, `parent_title` and a named `blocked_by` array (NID-527). |
 | **Auth on all /api/* routes** | **Implemented** | `Authorization: Bearer <TIMON_API_KEY>` required on all /api/* routes. |
-| **UI (minimal single-hue, reduced-motion, real form controls)** | **Missing** | No frontend code in this repo. |
+| **UI (minimal single-hue, reduced-motion, real form controls)** | **Implemented** | `app/` — Vite + vanilla TS. List view and context-first task view (parent / siblings / subtasks / blockers on one screen, no modal), single-hue instrument tokens, `prefers-reduced-motion`, real `<form>`/`<button>`/`<select>`, strict CSP with no inline styles or scripts (NID-525, NID-526, NID-527). |
 | **Jarvis Bridge (LLM tool `timon_create_task`)** | **Missing** | Apollo worker should call Timon over HTTP with text. Timon needs text-in endpoint. |
 | **LLM intent extraction** | **Wired (NID-469)** | `src/lib/intents.js` now calls Groq chat completions (`qwen/qwen3.8-27b`, JSON mode, same `GROQ_API_KEY` as STT) over `fetch()`. NID-465's DeepSeek-via-OpenRouter alternative remains a fallback if Groq JSON output proves unreliable, per the NID-469 decision. |
 
