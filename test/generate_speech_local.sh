@@ -8,6 +8,10 @@
 #   british     -> Daniel   (en_GB)
 #   australian  -> Karen    (en_AU)
 #   indian      -> Rishi    (en_IN)
+#   mexican     -> Paulina  (es_MX)
+#   colombian   -> Carlos   (es_CO)
+#   spanish     -> Monica   (es_ES)
+#   argentine   -> Diego    (es_AR)
 #
 # Usage: test/generate_speech_local.sh
 # Env:   AUDIO_DIR (default /tmp)
@@ -25,17 +29,24 @@ fi
 command -v say >/dev/null 2>&1 || { echo "Error: macOS 'say' required"; exit 1; }
 command -v afconvert >/dev/null 2>&1 || { echo "Error: macOS 'afconvert' required"; exit 1; }
 
-for i in $(seq 0 19); do
+TOTAL=$(jq 'length' "$CORPUS_FILE")
+
+for i in $(seq 0 $((TOTAL - 1))); do
   ENTRY=$(jq -r ".[$i]" "$CORPUS_FILE")
   ID=$(echo "$ENTRY" | jq -r '.id')
   TEXT=$(echo "$ENTRY" | jq -r '.text')
   ACCENT=$(echo "$ENTRY" | jq -r '.accent')
+  LANGUAGE=$(echo "$ENTRY" | jq -r '.language')
 
   case "$ACCENT" in
     american)   VOICE="Samantha" ;;
     british)    VOICE="Daniel" ;;
     australian) VOICE="Karen" ;;
     indian)     VOICE="Rishi" ;;
+    mexican)    VOICE="Paulina" ;;
+    colombian)  VOICE="Carlos" ;;
+    spanish)    VOICE="Monica" ;;
+    argentine)  VOICE="Diego" ;;
     *)          VOICE="Samantha" ;;
   esac
 
@@ -45,7 +56,7 @@ for i in $(seq 0 19); do
   say -v "$VOICE" -r 170 -o "$AIFF" "$TEXT"
   afconvert -f WAVE -d LEI16@16000 -c 1 "$AIFF" "$WAV"
   rm -f "$AIFF"
-  echo "Generated $WAV (accent=$ACCENT, voice=$VOICE)"
+  echo "Generated $WAV (language=$LANGUAGE, accent=$ACCENT, voice=$VOICE)"
 done
 
 echo "Done. $AUDIO_DIR now contains the corpus audio."

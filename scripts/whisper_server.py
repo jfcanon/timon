@@ -74,13 +74,52 @@ def _transcribe(path, language):
         result = model.transcribe(path, **kwargs)
         segments = result.get("segments") or []
         duration = segments[-1]["end"] if segments else None
-        return result.get("text", "").strip(), duration, result.get("language")
+        # Calculate weighted average logprob and max no_speech_prob across segments
+        avg_logprob = None
+        no_speech_prob = None
+        if segments:
+            total_weight = 0.0
+            weighted_logprob_sum = 0.0
+            max_no_speech = 0.0
+            for seg in segments:
+                seg_logprob = seg.get("avg_logprob")
+                seg_no_speech = seg.get("no_speech_prob")
+                seg_duration = seg.get("end", 0) - seg.get("start", 0)
+                if seg_duration > 0 and seg_logprob is not None:
+                    weighted_logprob_sum += seg_logprob * seg_duration
+                    total_weight += seg_duration
+                if seg_no_speech is not None and seg_no_speech > max_no_speech:
+                    max_no_speech = seg_no_speech
+            if total_weight > 0:
+                avg_logprob = weighted_logprob_sum / total_weight
+            if max_no_speech > 0:
+                no_speech_prob = max_no_speech
+        return result.get("text", "").strip(), duration, result.get("language"), avg_logprob, no_speech_prob
     kwargs = {"beam_size": 5}
     if language:
         kwargs["language"] = language
     segments, info = model.transcribe(path, **kwargs)
-    text = " ".join(seg.text.strip() for seg in segments)
-    return text, info.duration, info.language
+    segment_list = list(segments)
+    text = " ".join(seg.text.strip() for seg in segment_list)
+    # Calculate weighted average logprob and max no_speech_prob for faster-whisper
+    avg_logprob = None
+    no_speech_prob = None
+    if segment_list:
+        total_weight = 0.0
+        weighted_logprob_sum = 0.0
+        max_no_speech = 0.0
+        for seg in segment_list:
+            seg_duration = seg.end - seg.start
+            if seg_duration > 0 and seg.avg_logprob is not None:
+                weighted_logprob_sum += seg.avg_logprob * seg_duration
+                total_weight += seg_duration
+            if seg.no_speech_prob is not None and seg.no_speech_prob > max_no_speech:
+                max_no_speech = seg.no_speech_prob
+        if total_weight > 0:
+            avg_logprob = weighted_logprob_sum / total_weight
+        if max_no_speech > 0:
+            no_speech_prob = max_no_speech
+    return text, info.duration, info.language, avg_logprob, no_speech_prob
 
 
 @app.route("/v1/audio/transcriptions", methods=["POST"])
@@ -98,14 +137,19 @@ def transcribe():
 
     try:
         started = time.time()
-        text, duration, detected_language = _transcribe(tmp_path, language)
-        return jsonify({
+        text, duration, detected_language, avg_logprob, no_speech_prob = _transcribe(tmp_path, language)
+        response = {
             "text": text,
             "duration": duration,
             "language": detected_language,
             "backend": _backend,
             "latency_ms": int((time.time() - started) * 1000),
-        })
+        }
+        if avg_logprob is not None:
+            response["avg_logprob"] = avg_logprob
+        if no_speech_prob is not None:
+            response["no_speech_prob"] = no_speech_prob
+        return jsonify(response)
     finally:
         os.unlink(tmp_path)
 
