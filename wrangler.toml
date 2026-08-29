@@ -26,8 +26,11 @@ binding = "TIMON_META"
 database_name = "timon-meta"
 database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 
-# Secrets (set via wrangler secret put GROQ_API_KEY / TIMON_API_KEY)
+# Secrets (set via wrangler secret put ... — never via CI; the Worker retains
+# secrets across deploys, so they are provisioned ONCE, out-of-band)
 # [vars]
 # GROQ_API_KEY = ""  # Set as secret, not in code
 # TZ = "America/Argentina/Buenos_Aires"  # IANA timezone for intent date resolution (set via wrangler secret put TZ)
-# TIMON_API_KEY = "" # Set as secret, not in code — used for POST /api/tasks auth
+# TIMON_API_KEY = ""   # Set as secret, not in code — Bearer key for POST /api/tasks (ESP32 / apollo)
+# APP_PASSWORD = ""    # Set as secret, not in code — browser login password (POST /api/auth/login)
+# SESSION_SECRET = ""  # Set as secret, not in code — HMAC key for the signed session cookie (32 random bytes)

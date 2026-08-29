@@ -9,15 +9,14 @@ import {
   deleteTask,
 } from "./lib/store.js";
 import { SessionDO } from "./durable-objects/session.js";
+import {
+  isAuthorized,
+  createSessionToken,
+  sessionCookieValue,
+  clearedSessionCookieValue,
+} from "./lib/auth.js";
 
 export { SessionDO };
-
-function verifyApiKey(request, env) {
-  const auth = request.headers.get("authorization") || "";
-  if (!auth.startsWith("Bearer ")) return false;
-  const token = auth.slice(7);
-  return token === env.TIMON_API_KEY;
-}
 
 export default {
   async fetch(request, env) {
@@ -33,9 +32,20 @@ export default {
       );
     }
 
-    // Scope auth gate to /api and /api/* only
+    // Browser auth: these must be reachable WITHOUT a Bearer key (the browser
+    // has none). They sit outside the /api/* gate on purpose.
+    if (url.pathname === "/api/auth/login" && request.method === "POST") {
+      return handleLogin(request, env);
+    }
+    if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+      return handleLogout(request, env);
+    }
+
+    // Scope auth gate to /api and /api/* only. Accepts either a Bearer key
+    // (ESP32 / apollo) or a session cookie (browser) — the voice path is
+    // byte-for-byte unaffected.
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
-      if (!verifyApiKey(request, env)) {
+      if (!(await isAuthorized(request, env))) {
         return new Response(JSON.stringify({ error: "unauthorized" }), {
           status: 401,
           headers: { "content-type": "application/json" },
@@ -87,6 +97,54 @@ async function handleWebSocketConnect(request, env) {
   const stub = env.SESSION.get(id);
 
   return stub.fetch(request);
+}
+
+// Browser login: compare the password against the APP_PASSWORD Worker secret,
+// then set a signed HttpOnly session cookie. No Bearer key ever reaches the JS.
+async function handleLogin(request, env) {
+  if (!env.APP_PASSWORD) {
+    return new Response(JSON.stringify({ error: "auth_unavailable" }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const password = body && body.password;
+  if (typeof password !== "string" || password !== env.APP_PASSWORD) {
+    return new Response(JSON.stringify({ error: "invalid_credentials" }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const token = await createSessionToken(env, "owner");
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+      "set-cookie": sessionCookieValue(token),
+    },
+  });
+}
+
+async function handleLogout(request, env) {
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+      "set-cookie": clearedSessionCookieValue(),
+    },
+  });
 }
 
 async function handleVoice(request, env) {
