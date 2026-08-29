@@ -19,11 +19,20 @@ function makeEnv(overrides = {}) {
     idFromName: vi.fn(() => "mock-id"),
     get: vi.fn(() => mockSession),
   };
+  const mockAssets = {
+    fetch: vi.fn(async (request) => {
+      return new Response("<html>Timon shell</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }),
+  };
 
   return {
     TIMON_API_KEY: "test-api-key-123",
     TIMON_META: mockDB,
     SESSION: mockSessionDO,
+    ASSETS: mockAssets,
     ...overrides,
   };
 }
@@ -160,6 +169,151 @@ describe("Auth on all /api/* routes", () => {
 
     const response = await worker.fetch(request, env);
     expect(response.status).toBe(200);
+  });
+});
+
+describe("App shell / deep links (non-API paths)", () => {
+  let worker;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: "{}" } }] }),
+          { status: 200 }
+        );
+      })
+    );
+    const mod = await import("../src/index.js");
+    worker = mod.default;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("should serve shell for GET / (root)", async () => {
+    const env = makeEnv();
+    const request = new Request("https://timon-worker.example.com/", {
+      method: "GET",
+    });
+
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(200);
+    expect(env.ASSETS.fetch).toHaveBeenCalled();
+  });
+
+  it("should serve shell for deep link GET /app/anything", async () => {
+    const env = makeEnv();
+    const request = new Request(
+      "https://timon-worker.example.com/app/anything",
+      {
+        method: "GET",
+      }
+    );
+
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(200);
+    expect(env.ASSETS.fetch).toHaveBeenCalled();
+  });
+
+  it("should serve shell for deep link GET /app/task/123", async () => {
+    const env = makeEnv();
+    const request = new Request(
+      "https://timon-worker.example.com/app/task/123",
+      {
+        method: "GET",
+      }
+    );
+
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(200);
+    expect(env.ASSETS.fetch).toHaveBeenCalled();
+  });
+
+  it("should return 401 for GET /api/tasks without auth", async () => {
+    const env = makeEnv();
+    const request = new Request(
+      "https://timon-worker.example.com/api/tasks",
+      {
+        method: "GET",
+      }
+    );
+
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(401);
+    const data = await response.json();
+    expect(data.error).toBe("unauthorized");
+  });
+
+  it("should return 200 for GET /api/tasks with valid Bearer", async () => {
+    const env = makeEnv();
+    const request = new Request(
+      "https://timon-worker.example.com/api/tasks",
+      {
+        method: "GET",
+        headers: { authorization: `Bearer ${env.TIMON_API_KEY}` },
+      }
+    );
+
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(200);
+  });
+
+  it("should return 404 for unknown API route GET /api/unknown", async () => {
+    const env = makeEnv();
+    const request = new Request(
+      "https://timon-worker.example.com/api/unknown",
+      {
+        method: "GET",
+        headers: { authorization: `Bearer ${env.TIMON_API_KEY}` },
+      }
+    );
+
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(404);
+  });
+
+  it("should return 401 for GET /api (bare) without auth", async () => {
+    const env = makeEnv();
+    const request = new Request("https://timon-worker.example.com/api", {
+      method: "GET",
+    });
+
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(401);
+    const data = await response.json();
+    expect(data.error).toBe("unauthorized");
+  });
+
+  it("should return 404 for GET /api (bare) with valid Bearer", async () => {
+    const env = makeEnv();
+    const request = new Request(
+      "https://timon-worker.example.com/api",
+      {
+        method: "GET",
+        headers: { authorization: `Bearer ${env.TIMON_API_KEY}` },
+      }
+    );
+
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(404);
+  });
+});
+
+describe("Config assertion", () => {
+  it("should have correct assets config in wrangler.toml", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const wranglerPath = path.resolve(__dirname, "../wrangler.toml");
+    const content = fs.readFileSync(wranglerPath, "utf-8");
+
+    expect(content).toContain('[assets]');
+    expect(content).toContain('binding = "ASSETS"');
+    expect(content).toContain('directory = "app/dist"');
+    expect(content).toContain('not_found_handling = "single-page-application"');
   });
 });
 

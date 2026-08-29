@@ -4,6 +4,12 @@ compatibility_date = "2026-08-25"
 compatibility_flags = ["nodejs_compat"]
 observability = { enabled = true, head_sampling_rate = 1 }
 
+# Assets (static app shell)
+[assets]
+directory = "app/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
 # Durable Objects
 [durable_objects]
 bindings = [

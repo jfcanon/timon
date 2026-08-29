@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="hsl(var(--hue), 20%, 6%)" />
+    <title>Timon</title>
+    <style>
+      :root {
+        --hue: 240;
+        --bg: hsl(var(--hue), 20%, 6%);
+        --fg: hsl(var(--hue), 15%, 95%);
+        --fg-muted: hsl(var(--hue), 10%, 65%);
+        --accent: hsl(var(--hue), 85%, 72%);
+        --accent-soft: hsl(var(--hue), 85%, 72%, 0.12);
+        --border: hsl(var(--hue), 15%, 18%);
+        --focus: hsl(var(--hue), 85%, 60%);
+        --card: hsl(var(--hue), 18%, 8%);
+        --shadow: hsl(var(--hue), 25%, 3%);
+      }
+
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: hsl(var(--hue), 20%, 97%);
+          --fg: hsl(var(--hue), 20%, 8%);
+          --fg-muted: hsl(var(--hue), 10%, 40%);
+          --accent: hsl(var(--hue), 85%, 45%);
+          --accent-soft: hsl(var(--hue), 85%, 45%, 0.12);
+          --border: hsl(var(--hue), 15%, 82%);
+          --focus: hsl(var(--hue), 85%, 40%);
+          --card: hsl(var(--hue), 18%, 96%);
+          --shadow: hsl(var(--hue), 25%, 85%);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        font-size: 16px;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        line-height: 1.6;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem 1rem;
+      }
+
+      .shell {
+        width: 100%;
+        max-width: 480px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 3rem 2rem;
+        box-shadow: 0 4px 24px var(--shadow);
+        text-align: center;
+      }
+
+      .logo {
+        font-size: clamp(2.5rem, 8vw, 4rem);
+        font-weight: 700;
+        color: var(--accent);
+        letter-spacing: -0.03em;
+        margin-bottom: 0.5rem;
+        line-height: 1.1;
+      }
+
+      .tagline {
+        color: var(--fg-muted);
+        font-size: 1.125rem;
+        margin-bottom: 2rem;
+        font-weight: 400;
+      }
+
+      .health-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.5rem;
+        background: var(--accent-soft);
+        color: var(--fg);
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        font-size: 0.9375rem;
+        font-weight: 500;
+        text-decoration: none;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+
+      .health-link:hover {
+        background: var(--accent);
+        color: var(--bg);
+      }
+
+      .health-link:focus {
+        background: var(--accent);
+        color: var(--bg);
+        outline: none;
+      }
+
+      .health-link:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+
+      .health-link svg {
+        width: 1.125rem;
+        height: 1.125rem;
+        flex-shrink: 0;
+      }
+
+      .version {
+        margin-top: 2rem;
+        font-size: 0.75rem;
+        color: var(--fg-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell" role="main">
+      <h1 class="logo">Timon</h1>
+      <p class="tagline">Voice-first task manager. Speak, it listens.</p>
+      <a href="/healthz" class="health-link" aria-label="Check service health">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+          <polyline points="22 4 12 14.01 9 11.01" />
+        </svg>
+        <span>Health check</span>
+      </a>
+      <p class="version">v0.1.0-shell</p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
