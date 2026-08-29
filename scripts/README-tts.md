@@ -3,28 +3,34 @@
 OpenAI-compatible `POST /v1/audio/speech` -> 24 kHz mono s16le raw PCM (what Apollo's `tts_start pcm` expects).
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r scripts/requirements-tts.txt
-.venv/bin/python scripts/tts_server.py                  # auto: kokoro-mlx on Apple silicon, else piper, else stub
-TTS_BACKEND=piper .venv/bin/python scripts/tts_server.py
-TTS_BACKEND=stub TTS_PORT=8788 .venv/bin/python scripts/tts_server.py
+python3 -m venv .venv-tts && .venv-tts/bin/pip install -r scripts/requirements-tts.txt
+.venv-tts/bin/python scripts/tts_server.py                  # auto: kokoro-mlx on Apple silicon else stub
+TTS_BACKEND=stub TTS_PORT=8788 .venv-tts/bin/python scripts/tts_server.py
 ```
 
-Spike (M-series, 12-word sentence ≈ 18 tokens, warm model):
-- **kokoro-mlx (Kokoro-82M via mlx-audio)**: ~300-400 ms inference, ~2.2 s cold warm-up (MLX graph compile), RTF ~0.1, MOS ~4.2, 24 kHz native — **chosen** (quality + Spanish voice, stays within 1.5 s after jarvis.sh warms it)
-- **piper (sherpa-onnx)**: ~40-150 ms, RTF ~0.03, MOS 4.2-4.3, 22.05 kHz -> resampled to 24 kHz — fallback when kokoro not importable
-- **OmniVoice/XTTS**: MPS broken (corrupt audio), CPU ~10 s per second of audio — rejected
-- **stub**: sine-wave, ~1 ms, for CI
+> Separate venv (`TTS_VENV`) is recommended — `mlx-audio` pins `mlx>=0.25.2` and `transformers>=4.49` which can drift `mlx-whisper` deps in the shared whisper venv. `ops/jarvis.sh` defaults to a separate TTS venv.
 
-Measured on this repo's Mac: re-run `curl -w "%{time_starttransfer}"` against `/v1/audio/speech` after `get_backend()` warm-up; record in PR.
+Spike (M-series, 12-word sentence ≈ 18 tokens, warm model, measured per challenge diagnosis):
+- **kokoro-mlx (Kokoro-82M via mlx-audio[tts]==0.2.9)**: ~300-400 ms warm inference, ~2.2 s cold MLX graph compile (once, warmed at `jarvis.sh up`), RTF ~0.1, MOS ~4.2, 24 kHz native — **chosen**; Spanish via `ef_dora`/`em_alex` with `lang_code=e` (Castilian, not Rioplatense)
+- **piper/sherpa-onnx**: not yet implemented in this server (removed from `auto` — would have reported `piper` while emitting sine stub); keep for follow-up with `sherpa_onnx.OfflineTts` + downloaded `.onnx`
+- **OmniVoice/XTTS**: MPS broken (unintelligible), CPU RTF 0.2 (~10 s/s) — rejected; `stub` is sine-wave (~1 ms, numpy-vectorized) for CI only and demotes `backend` to `stub` on Kokoro load failure (health 503, not green)
+
+Measured on this Mac: re-run after `get_backend()` warm-up; record in PR (stub is ~19 ms there, real Kokoro ~300-400 ms warm).
 
 ```
 curl -X POST http://localhost:8788/v1/audio/speech \
   -H "Content-Type: application/json" \
-  -d '{"model":"kokoro","input":"Hola, esto es una prueba de doce palabras para medir latencia.","voice":"af_heart","response_format":"pcm"}' \
+  -d '{"model":"kokoro","input":"Hello this is a twelve word sentence to measure latency.","voice":"af_heart","response_format":"pcm"}' \
   --output /tmp/out.pcm -D - -s -o /dev/null | grep -i latency
 
 curl -s http://localhost:8788/healthz | jq .
-# {"status":"ok","service":"local-tts","backend":"kokoro-mlx","engine":"kokoro-mlx","voice":"af_heart","sample_rate":24000,"channels":1}
+# {"status":"ok","service":"local-tts","backend":"kokoro-mlx","model_loaded":true,"voice":"af_heart","sample_rate":24000,"channels":1}
+# degraded: {"status":"degraded","backend":"stub","model_loaded":false,"error":"..."} -> 503
+
+# Spanish (lang_code=e derived from voice prefix):
+curl -X POST http://localhost:8788/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"model":"kokoro","input":"Hola, esto es una prueba.","voice":"ef_dora","response_format":"pcm"}' --output /tmp/es.pcm -D -
 ```
 
-Every response carries `X-Latency-Ms` and `X-Engine`; `/healthz` reports active backend + voice.
+Every response carries `X-Latency-Ms` and `X-Engine`; unsupported `response_format` (mp3/opus) returns 400; inputs >500 chars return 413; synthesis failures return 502 (never cached).

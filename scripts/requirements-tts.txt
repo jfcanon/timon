@@ -1,10 +1,7 @@
-flask
-# Apple silicon fast path (Metal, ~0.3-0.4 s warm for 12-word sentence)
-# mlx-audio pins mlx; keep in same venv as whisper when possible.
-mlx-audio ; sys_platform == "darwin"
-# CPU fallback — sherpa-onnx provides CoreML EP + resampling; piper-tts as fallback
-sherpa-onnx ; sys_platform == "darwin"
-piper-tts
-# Resampling for Piper 22.05 -> 24 kHz when sherpa-onnx not used (scipy uses Accelerate on Mac)
-numpy
-scipy ; sys_platform == "darwin"
+flask==3.1.0
+numpy>=1.26.4
+# Pinned Kokoro path; tts extra brings misaki[en], espeakng-loader, phonemizer-fork, num2words, spacy
+mlx-audio[tts]==0.2.9 ; sys_platform == "darwin"
+# mlx and transformers ranges required by mlx-audio; keep in sync with whisper venv if shared
+mlx>=0.25.2 ; sys_platform == "darwin"
+transformers>=4.49,<5 ; sys_platform == "darwin"
