@@ -61,6 +61,21 @@ async function verifySig(data, sigB64, secret) {
   return diff === 0;
 }
 
+// Length-independent, byte-wise comparison of two secrets. `a === b` on a
+// password short-circuits on the first differing byte; this does not. The
+// remote timing signal is tiny, but the fix costs nothing.
+export function timingSafeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const left = new TextEncoder().encode(a);
+  const right = new TextEncoder().encode(b);
+  let diff = left.length ^ right.length;
+  const max = Math.max(left.length, right.length);
+  for (let i = 0; i < max; i++) {
+    diff |= (left[i] ?? 0) ^ (right[i] ?? 0);
+  }
+  return diff === 0;
+}
+
 // The Bearer gate, unchanged in behaviour from the previous inline version:
 // the TIMON_API_KEY is only ever compared server-side and is never shipped to
 // the browser.

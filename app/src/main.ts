@@ -3,6 +3,10 @@
 // Two routes, both server-safe: `/` (list) and `/t/:id` (context). The Worker
 // serves the shell for any non-/api path (`not_found_handling =
 // single-page-application`), so a deep link into a task survives a refresh.
+//
+// List filters live in the query string, not in a module variable: that is what
+// makes a filtered list shareable, survive a refresh, undo with Back, and reset
+// when you click "Tareas".
 
 import "./styles.css";
 import { clear, el } from "./dom";
@@ -10,40 +14,37 @@ import { renderContext } from "./views/context";
 import { renderList } from "./views/list";
 import { renderLogin, signOut } from "./views/auth";
 import { offlineBanner } from "./views/states";
-import type { ListFilters } from "./api";
+import { contextIdFromPath, filtersFromSearch, listHref } from "./routing";
 
 const page = document.getElementById("page") as HTMLElement;
 const main = document.getElementById("main") as HTMLElement;
 const mastheadSlot = document.getElementById("masthead") as HTMLElement;
 const bannerSlot = document.getElementById("banner") as HTMLElement;
 
-let filters: ListFilters = {};
+/** Where to return to once a login succeeds. */
+let pendingReturnTo: string | null = null;
 
-function contextIdFromPath(pathname: string): string | null {
-  const match = pathname.match(/^\/t\/(.+)$/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    // A truncated or malformed escape (/t/abc%) throws URIError. The shell is
-    // served for any non-/api path, so an unguarded throw here would leave the
-    // page blank with no way back. Pass the raw segment through instead and
-    // let the API answer 404, which the view already renders as a real state.
-    return match[1];
-  }
+function currentHref(): string {
+  return location.pathname + location.search;
 }
 
+// Push only when the URL actually changes — but always re-render. Returning
+// early on an unchanged href would make "Aplicar" with the same filters, and
+// "Tareas" from an already-unfiltered list, silently do nothing.
 function navigate(href: string): void {
-  if (href === location.pathname + location.search) return;
-  history.pushState({}, "", href);
+  if (href !== currentHref()) history.pushState({}, "", href);
   route();
 }
 
 function showLogin(message: string | null = null): void {
+  // Remember where the user was so a session that dies on /t/:id does not
+  // silently demote them to the list after they log back in.
+  pendingReturnTo = currentHref();
   clear(mastheadSlot);
   renderLogin(main, message, () => {
-    history.replaceState({}, "", "/");
-    filters = {};
+    const returnTo = pendingReturnTo ?? "/";
+    pendingReturnTo = null;
+    history.replaceState({}, "", returnTo);
     route();
   });
 }
@@ -56,7 +57,10 @@ function masthead(): void {
   ]);
   logoutButton.addEventListener("click", () => {
     logoutButton.disabled = true;
-    void signOut().then(() => showLogin());
+    void signOut().then(() => {
+      history.replaceState({}, "", "/");
+      showLogin();
+    });
   });
 
   mastheadSlot.append(
@@ -81,11 +85,8 @@ function route(): void {
   }
   renderList(
     main,
-    filters,
-    (next) => {
-      filters = next;
-      route();
-    },
+    filtersFromSearch(location.search),
+    (next) => navigate(listHref(next)),
     () => showLogin("Tu sesión expiró.")
   );
 }

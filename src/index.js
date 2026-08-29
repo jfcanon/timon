@@ -14,6 +14,7 @@ import {
   createSessionToken,
   sessionCookieValue,
   clearedSessionCookieValue,
+  timingSafeEqual,
 } from "./lib/auth.js";
 
 export { SessionDO };
@@ -120,7 +121,7 @@ async function handleLogin(request, env) {
   }
 
   const password = body && body.password;
-  if (typeof password !== "string" || password !== env.APP_PASSWORD) {
+  if (!timingSafeEqual(password, env.APP_PASSWORD)) {
     return new Response(JSON.stringify({ error: "invalid_credentials" }), {
       status: 401,
       headers: { "content-type": "application/json" },

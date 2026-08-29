@@ -21,6 +21,11 @@ import {
 } from "../format";
 import { errorState, loadingState, notFoundState } from "./states";
 
+/** A dead or missing session, as raised by api.ts. */
+function isUnauthorized(error: unknown): boolean {
+  return error instanceof Error && error.name === "UnauthorizedError";
+}
+
 export function renderContext(
   root: HTMLElement,
   id: string,
@@ -37,12 +42,12 @@ export function renderContext(
     getTaskContext(id)
       .then((context) => {
         clear(slot);
-        slot.append(view(context, load));
+        slot.append(view(context, load, onUnauthorized));
         const heading = slot.querySelector<HTMLElement>(".title");
         heading?.focus();
       })
       .catch((error: unknown) => {
-        if (error instanceof Error && error.name === "UnauthorizedError") {
+        if (isUnauthorized(error)) {
           onUnauthorized();
           return;
         }
@@ -58,7 +63,11 @@ export function renderContext(
   load();
 }
 
-function view(context: TaskContext, reload: () => void): DocumentFragment {
+function view(
+  context: TaskContext,
+  reload: () => void,
+  onUnauthorized: () => void
+): DocumentFragment {
   const { task, parent, siblings, subtasks, blockers, blocks } = context;
   const open = activeBlockers(blockers);
 
@@ -114,7 +123,7 @@ function view(context: TaskContext, reload: () => void): DocumentFragment {
 
   // 5. Only now — with parent, siblings, subtasks and blockers on screen — the
   //    start affordance is mounted into the task panel.
-  mountStart(main, task, open, reload);
+  mountStart(main, task, open, reload, onUnauthorized);
 
   return fragment;
 }
@@ -232,6 +241,7 @@ function taskRows(tasks: Task[]): HTMLElement {
     { class: "rows" },
     tasks.map((task) => {
       const due = dueLabel(task.due_date);
+      const done = isDone(task);
       return el("li", {}, [
         el(
           "a",
@@ -241,8 +251,17 @@ function taskRows(tasks: Task[]): HTMLElement {
             "data-route": "",
           },
           [
-            el("span", { class: isDone(task) ? "row__done" : null }, [
+            el("span", { class: done ? "row__done" : null }, [
               task.title,
+              // The strike-through is presentation only. Without this a screen
+              // reader announces a resolved blocker exactly like an open one —
+              // which matters most in the blockers panel, where telling those
+              // apart is the entire reason the panel comes first (WCAG 1.3.1).
+              done
+                ? el("span", { class: "visually-hidden" }, [
+                    ` — ${statusLabel(task.status)}`,
+                  ])
+                : null,
             ]),
             el("span", { class: "value" }, [
               due ? due.relative : priorityLabel(task.priority),
@@ -255,15 +274,21 @@ function taskRows(tasks: Task[]): HTMLElement {
 }
 
 /**
- * The single start affordance. It is created here, at the end of the render,
- * rather than inside `taskPanel`, so that it is impossible to ship a version
- * where the button paints before the context does.
+ * The single start affordance. It is mounted here, at the end of `view`, after
+ * every context panel has been built — not inside `taskPanel` — so it is not
+ * possible to ship a version where the button is assembled before the context.
+ *
+ * The panels are still in a `DocumentFragment` at this point, not yet in the
+ * document; the fragment is appended atomically, so the user never sees the
+ * button without the context. The ordering here is what guarantees that, so
+ * keep the mount last if this function is ever refactored.
  */
 function mountStart(
   main: HTMLElement,
   task: Task,
   openBlockers: Task[],
-  reload: () => void
+  reload: () => void,
+  onUnauthorized: () => void
 ): void {
   const status = el("p", { class: "label", role: "status" }, []);
 
@@ -300,7 +325,13 @@ function mountStart(
     status.textContent = "marcando…";
     patchTask(task.id, { status: "in_progress" })
       .then(() => reload())
-      .catch(() => {
+      .catch((error: unknown) => {
+        // A dead session must route to login like every read path does.
+        // Telling the user to retry here would loop forever on 401.
+        if (isUnauthorized(error)) {
+          onUnauthorized();
+          return;
+        }
         button.disabled = false;
         status.textContent = "no se pudo marcar — reintentá";
       });

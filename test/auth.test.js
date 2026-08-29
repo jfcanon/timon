@@ -7,6 +7,7 @@ import {
   sessionCookieValue,
   clearedSessionCookieValue,
   SESSION_COOKIE,
+  timingSafeEqual,
 } from "../src/lib/auth.js";
 
 function makeEnv(overrides = {}) {
@@ -340,5 +341,33 @@ describe("Auth gate integration (regression for the voice path)", () => {
     });
     const res = await worker.fetch(req, env);
     expect(res.status).toBe(201);
+  });
+});
+
+describe("timingSafeEqual", () => {
+  it("matches identical secrets", () => {
+    expect(timingSafeEqual("hunter2", "hunter2")).toBe(true);
+  });
+
+  it("rejects a different secret of the same length", () => {
+    expect(timingSafeEqual("hunter2", "hunter3")).toBe(false);
+  });
+
+  it("rejects on a length mismatch without throwing", () => {
+    expect(timingSafeEqual("short", "a much longer secret")).toBe(false);
+    expect(timingSafeEqual("", "x")).toBe(false);
+  });
+
+  it("rejects a missing or non-string secret", () => {
+    // env.APP_PASSWORD being undefined must never compare equal to anything.
+    expect(timingSafeEqual("anything", undefined)).toBe(false);
+    expect(timingSafeEqual(undefined, undefined)).toBe(false);
+    expect(timingSafeEqual(null, "x")).toBe(false);
+    expect(timingSafeEqual({}, "x")).toBe(false);
+  });
+
+  it("compares multi-byte characters by byte", () => {
+    expect(timingSafeEqual("contraseña", "contraseña")).toBe(true);
+    expect(timingSafeEqual("contraseña", "contrasena")).toBe(false);
   });
 });

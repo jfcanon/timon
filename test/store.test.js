@@ -398,6 +398,35 @@ describe('listTasks', () => {
     expect(parent.subtask_count).toBe(1);
   });
 
+  it('should separate every dependency from the ones that still block', async () => {
+    await ensureSchema(db);
+    const tid = await createTask(db, { title: 'Pintar el living' });
+    const openId = await createTask(db, { title: 'Comprar la pintura' });
+    const doneId = await createTask(db, { title: 'Elegir el color' });
+    await addDependency(db, tid, openId);
+    await addDependency(db, tid, doneId);
+    await updateTask(db, doneId, { status: 'done' });
+
+    const row = (await listTasks(db)).find(r => r.id === tid);
+
+    // Both edges exist, but only one of them still blocks. A consumer asking
+    // "can I start this?" must read blocked_by_open_count, not the total.
+    expect(row.blocked_by_count).toBe(2);
+    expect(row.blocked_by_open_count).toBe(1);
+  });
+
+  it('should report zero open blockers once every dependency is resolved', async () => {
+    await ensureSchema(db);
+    const tid = await createTask(db, { title: 'Mudanza' });
+    const depId = await createTask(db, { title: 'Contratar el flete' });
+    await addDependency(db, tid, depId);
+    await updateTask(db, depId, { status: 'cancelled' });
+
+    const row = (await listTasks(db)).find(r => r.id === tid);
+    expect(row.blocked_by_count).toBe(1);
+    expect(row.blocked_by_open_count).toBe(0);
+  });
+
   // Regression: the previous implementation decorated the list with
   // `WHERE id IN (?, ?, …)` built from every returned id. D1 caps a query at
   // 100 bound parameters, so `GET /api/tasks` threw a 1101 on the live worker
