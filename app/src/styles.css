@@ -690,6 +690,74 @@ body {
   text-transform: uppercase;
 }
 
+/* ---------------------------------------------------------- create form --- */
+
+.create-form {
+  max-width: 32rem;
+}
+
+.field-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap);
+}
+
+.field-group .field {
+  flex: 1 1 10rem;
+}
+
+/* ----------------------------------------------------------- edit form --- */
+
+.edit-form {
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.title-input {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--void);
+  color: var(--text);
+  font: inherit;
+  font-size: clamp(1.25rem, 4.5vw, 1.75rem);
+  line-height: 1.25;
+  margin-bottom: 0.75rem;
+}
+
+.title-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* ----------------------------------------------------------- actions --- */
+
+.actions__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* ----------------------------------------------------------- danger --- */
+
+.btn--danger {
+  border-color: hsl(0 60% 50%);
+  color: hsl(0 60% 65%);
+}
+
+.btn--danger:hover {
+  background: hsl(0 60% 50% / 0.15);
+  border-color: hsl(0 60% 65%);
+  color: hsl(0 60% 70%);
+}
+
+.btn--danger[disabled] {
+  opacity: 0.45;
+}
+
 /* ------------------------------------------------------------------ misc --- */
 
 .skip {

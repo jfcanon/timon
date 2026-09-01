@@ -147,7 +147,7 @@ describe("renderContext — the start affordance", () => {
     expect(root.textContent).toContain("Todas las dependencias están resueltas");
   });
 
-  it("offers no start button for a task that is already done", async () => {
+  it("offers no start button for a task that is already done, but offers reopen", async () => {
     getTaskContext.mockResolvedValue({
       ...context(),
       task: task({ status: "done" }),
@@ -156,8 +156,14 @@ describe("renderContext — the start affordance", () => {
     renderContext(root, "t-1", vi.fn());
     await settle();
 
-    expect(root.querySelector(".actions button")).toBeNull();
-    expect(root.textContent).toContain("tarea hecha");
+    // No "Empezar" button, but there is a "Reabrir" button
+    const buttons = root.querySelectorAll<HTMLButtonElement>(".actions button");
+    const startBtn = [...buttons].find((b) => b.textContent === "Empezar");
+    const reopenBtn = [...buttons].find((b) => b.textContent === "Reabrir");
+    expect(startBtn).toBeUndefined();
+    expect(reopenBtn).toBeDefined();
+    // Status shows "hecha" (the done label)
+    expect(root.textContent).toContain("hecha");
   });
 });
 

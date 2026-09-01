@@ -3,11 +3,15 @@
 // Cards carry the whole decision: title, relative + absolute due date, priority
 // badge, category chip, inline parent breadcrumb, a "blocked by" callout naming
 // the blockers, and subtasks nested one level under their parent.
+//
+// Stage 4: the list view includes the create form at the top so users can
+// add tasks directly from the browser.
 
 import { listTasks, type ListFilters } from "../api";
 import { clear, el } from "../dom";
 import { countLabel, type Task } from "../format";
 import { buildTree, type TreeNode } from "../tree";
+import { renderCreateForm } from "./create";
 import { taskCard } from "./card";
 import { emptyState, errorState, loadingState } from "./states";
 
@@ -60,7 +64,10 @@ export function renderList(
   // built after the fetch and swapped in here.
   const filterSlot = el("div", { class: "stack stack--tight" });
 
-  root.append(heading, filterSlot, readout, results);
+  // Create form slot — shown after loading, populated with known categories.
+  const createSlot = el("div", { class: "stack stack--tight" });
+
+  root.append(heading, filterSlot, createSlot, readout, results);
 
   const load = (): void => {
     clear(results);
@@ -74,6 +81,19 @@ export function renderList(
         filterSlot.append(
           filterForm(filters, categoriesOf(tasks), onFilter)
         );
+
+        // Render create form with known categories
+        clear(createSlot);
+        renderCreateForm(createSlot, {
+          categories: categoriesOf(tasks),
+          onCreated: (taskId) => {
+            // Navigate to the newly created task's context view
+            history.pushState({}, "", `/t/${taskId}`);
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          },
+          onUnauthorized,
+        });
+
         clear(results);
         if (tasks.length === 0) {
           const isFiltered = Boolean(filters.status || filters.category);

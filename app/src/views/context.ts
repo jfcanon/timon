@@ -2,11 +2,14 @@
 //
 // The TDAH core rule made real: parent above, siblings beside, subtasks below,
 // blockers called out FIRST, all on one screen with no modal. The single
-// "start" affordance is appended only after every context panel is in the DOM
-// (see `mountStart` at the bottom) — you cannot start before you have seen
-// what you are starting.
+// "start" affordance is mounted at the end of view after every context panel
+// is in the DOM.
+//
+// Stage 4 additions: inline edit (PATCH title/due/priority/category/parent),
+// complete/undo (PATCH status), and delete (DELETE /api/tasks/:id) with
+// in-page confirmation. Optimistic UI with rollback on error.
 
-import { getTaskContext, patchTask } from "../api";
+import { deleteTask, getTaskContext, patchTask } from "../api";
 import { cells, clear, el, panel, strip } from "../dom";
 import {
   activeBlockers,
@@ -16,12 +19,12 @@ import {
   priorityClass,
   priorityLabel,
   statusLabel,
+  type Priority,
   type Task,
   type TaskContext,
 } from "../format";
 import { errorState, loadingState, notFoundState } from "./states";
 
-/** A dead or missing session, as raised by api.ts. */
 function isUnauthorized(error: unknown): boolean {
   return error instanceof Error && error.name === "UnauthorizedError";
 }
@@ -75,14 +78,11 @@ function view(
 
   fragment.append(crumbs(parent));
 
-  // 1. Blockers first — they are the reason not to start.
   if (blockers.length > 0) fragment.append(blockersPanel(blockers, open));
 
-  // 2. Parent above.
   if (parent) fragment.append(parentPanel(parent));
 
-  // 3. The task itself, with siblings beside it on desktop.
-  const main = taskPanel(task);
+  const main = taskPanel(task, reload, onUnauthorized);
   fragment.append(
     el("div", { class: "context-grid" }, [
       main,
@@ -95,7 +95,6 @@ function view(
     ])
   );
 
-  // 4. Subtasks below.
   fragment.append(
     panel(
       "Subtareas",
@@ -121,9 +120,7 @@ function view(
     );
   }
 
-  // 5. Only now — with parent, siblings, subtasks and blockers on screen — the
-  //    start affordance is mounted into the task panel.
-  mountStart(main, task, open, reload, onUnauthorized);
+  mountActions(main, task, open, reload, onUnauthorized);
 
   return fragment;
 }
@@ -182,11 +179,17 @@ function parentPanel(parent: Task): HTMLElement {
   ]);
 }
 
-function taskPanel(task: Task): HTMLElement {
+// ── Task panel (read-only view) ────────────────────────────────────────────
+
+function taskPanel(
+  task: Task,
+  reload: () => void,
+  onUnauthorized: () => void
+): HTMLElement {
   const due = dueLabel(task.due_date);
   const created = dueLabel(task.created_at);
 
-  return panel(
+  const panelEl = panel(
     "Tarea",
     [
       el("h1", { class: "title", tabindex: "-1" }, [task.title]),
@@ -210,6 +213,8 @@ function taskPanel(task: Task): HTMLElement {
     ],
     "panel--focus"
   );
+
+  return panelEl;
 }
 
 function tagsFor(task: Task): HTMLElement[] {
@@ -253,10 +258,6 @@ function taskRows(tasks: Task[]): HTMLElement {
           [
             el("span", { class: done ? "row__done" : null }, [
               task.title,
-              // The strike-through is presentation only. Without this a screen
-              // reader announces a resolved blocker exactly like an open one —
-              // which matters most in the blockers panel, where telling those
-              // apart is the entire reason the panel comes first (WCAG 1.3.1).
               done
                 ? el("span", { class: "visually-hidden" }, [
                     ` — ${statusLabel(task.status)}`,
@@ -273,69 +274,348 @@ function taskRows(tasks: Task[]): HTMLElement {
   );
 }
 
-/**
- * The single start affordance. It is mounted here, at the end of `view`, after
- * every context panel has been built — not inside `taskPanel` — so it is not
- * possible to ship a version where the button is assembled before the context.
- *
- * The panels are still in a `DocumentFragment` at this point, not yet in the
- * document; the fragment is appended atomically, so the user never sees the
- * button without the context. The ordering here is what guarantees that, so
- * keep the mount last if this function is ever refactored.
- */
-function mountStart(
+// ── Actions (start / edit / complete / undo / delete) ──────────────────────
+
+function mountActions(
   main: HTMLElement,
   task: Task,
   openBlockers: Task[],
   reload: () => void,
   onUnauthorized: () => void
 ): void {
-  const status = el("p", { class: "label", role: "status" }, []);
+  const actionsEl = el("div", { class: "actions" }, []);
 
+  // 1. Start button (existing)
+  if (task.status === "pending") {
+    const blocked = openBlockers.length > 0;
+    const status = el("p", { class: "label", role: "status" }, []);
+    const button = el(
+      "button",
+      {
+        type: "button",
+        class: blocked ? "btn" : "btn btn--solid",
+      },
+      [blocked ? "Empezar igual" : "Empezar"]
+    );
+    if (blocked) {
+      status.textContent = `${countLabel(openBlockers.length, "bloqueo", "bloqueos")} sin resolver`;
+    }
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      status.textContent = "marcando…";
+      patchTask(task.id, { status: "in_progress" })
+        .then(() => reload())
+        .catch((error: unknown) => {
+          if (isUnauthorized(error)) {
+            onUnauthorized();
+            return;
+          }
+          button.disabled = false;
+          status.textContent = "no se pudo marcar — reintentá";
+        });
+    });
+    actionsEl.append(el("div", { class: "actions__row" }, [button, status]));
+  }
+
+  // 2. In-progress indicator
   if (task.status === "in_progress") {
-    status.textContent = "esta tarea ya está en curso";
-    main.append(el("div", { class: "actions" }, [status]));
-    return;
+    actionsEl.append(
+      el("div", { class: "actions__row" }, [
+        el("p", { class: "label" }, ["esta tarea ya está en curso"]),
+      ])
+    );
   }
 
+  // 3. Complete / undo
+  if (task.status === "in_progress") {
+    const undoStatus = el("p", { class: "label", role: "status" }, []);
+    const completeBtn = el(
+      "button",
+      { type: "button", class: "btn btn--solid" },
+      ["Marcar hecha"]
+    );
+    completeBtn.addEventListener("click", () => {
+      completeBtn.disabled = true;
+      undoStatus.textContent = "marcando…";
+      patchTask(task.id, { status: "done" })
+        .then(() => reload())
+        .catch((error: unknown) => {
+          if (isUnauthorized(error)) {
+            onUnauthorized();
+            return;
+          }
+          completeBtn.disabled = false;
+          undoStatus.textContent = "no se pudo marcar — reintentá";
+        });
+    });
+    actionsEl.append(
+      el("div", { class: "actions__row" }, [completeBtn, undoStatus])
+    );
+  }
+
+  // 4. Undo (re-open) for done/cancelled tasks
   if (isDone(task)) {
-    status.textContent = `tarea ${statusLabel(task.status)}`;
-    main.append(el("div", { class: "actions" }, [status]));
-    return;
+    const undoStatus = el("p", { class: "label", role: "status" }, []);
+    const undoBtn = el(
+      "button",
+      { type: "button", class: "btn" },
+      ["Reabrir"]
+    );
+    undoBtn.addEventListener("click", () => {
+      undoBtn.disabled = true;
+      undoStatus.textContent = "reabriendo…";
+      patchTask(task.id, { status: "pending" })
+        .then(() => reload())
+        .catch((error: unknown) => {
+          if (isUnauthorized(error)) {
+            onUnauthorized();
+            return;
+          }
+          undoBtn.disabled = false;
+          undoStatus.textContent = "no se pudo reabrir — reintentá";
+        });
+    });
+    actionsEl.append(
+      el("div", { class: "actions__row" }, [undoBtn, undoStatus])
+    );
   }
 
-  const blocked = openBlockers.length > 0;
-  const button = el(
+  // 5. Edit button
+  if (!isDone(task)) {
+    const editBtn = el(
+      "button",
+      { type: "button", class: "btn" },
+      ["Editar"]
+    );
+    editBtn.addEventListener("click", () => {
+      mountEditForm(main, task, reload, onUnauthorized);
+    });
+    actionsEl.append(el("div", { class: "actions__row" }, [editBtn]));
+  }
+
+  // 6. Delete button (with in-page confirmation)
+  const deleteSlot = el("div", { class: "actions__row" });
+  mountDeleteButton(deleteSlot, task, reload, onUnauthorized);
+  actionsEl.append(deleteSlot);
+
+  main.append(actionsEl);
+}
+
+// ── Inline edit form ───────────────────────────────────────────────────────
+
+function mountEditForm(
+  main: HTMLElement,
+  task: Task,
+  reload: () => void,
+  onUnauthorized: () => void
+): void {
+  // Remove the read-only cells and actions, replace with edit form
+  const cellsEl = main.querySelector(".cells");
+  const actionsEl = main.querySelector(".actions");
+  const tagsEl = main.querySelector(".tags");
+  const titleEl = main.querySelector(".title");
+
+  // Hide read-only elements
+  if (cellsEl) (cellsEl as HTMLElement).hidden = true;
+  if (actionsEl) (actionsEl as HTMLElement).hidden = true;
+  if (tagsEl) (tagsEl as HTMLElement).hidden = true;
+
+  // Replace title with input
+  if (titleEl) {
+    const titleInput = el("input", {
+      type: "text",
+      class: "title-input",
+      value: task.title,
+      "aria-label": "Título",
+    }) as HTMLInputElement;
+    titleEl.replaceWith(titleInput);
+    titleInput.focus();
+    titleInput.select();
+  }
+
+  const statusEl = el("p", { class: "label", role: "status" }, []);
+
+  const prioritySelect = el(
+    "select",
+    { id: "edit-priority", name: "priority" },
+    [
+      el("option", { value: "", selected: !task.priority }, ["sin prioridad"]),
+      el("option", { value: "high", selected: task.priority === "high" }, [
+        "alta",
+      ]),
+      el("option", { value: "medium", selected: task.priority === "medium" }, [
+        "media",
+      ]),
+      el("option", { value: "low", selected: task.priority === "low" }, [
+        "baja",
+      ]),
+    ]
+  ) as HTMLSelectElement;
+
+  const categoryInput = el("input", {
+    type: "text",
+    id: "edit-category",
+    name: "category",
+    value: task.category ?? "",
+    placeholder: "categoría",
+  }) as HTMLInputElement;
+
+  const dueInput = el("input", {
+    type: "date",
+    id: "edit-due",
+    name: "due_date",
+    value: task.due_date ? task.due_date.slice(0, 10) : "",
+  }) as HTMLInputElement;
+
+  const saveBtn = el(
     "button",
-    {
-      type: "button",
-      // Fill = primacy. A blocked task's start button drops to a wireframe so
-      // the solid element on screen is never the one you should not press.
-      class: blocked ? "btn" : "btn btn--solid",
-    },
-    [blocked ? "Empezar igual" : "Empezar"]
+    { type: "button", class: "btn btn--solid" },
+    ["Guardar"]
+  );
+  const cancelBtn = el(
+    "button",
+    { type: "button", class: "btn" },
+    ["Cancelar"]
   );
 
-  if (blocked) {
-    status.textContent = `${countLabel(openBlockers.length, "bloqueo", "bloqueos")} sin resolver`;
+  const editForm = el("div", { class: "edit-form" }, [
+    el("div", { class: "field-group" }, [
+      el("div", { class: "field" }, [
+        el("label", { class: "label", for: "edit-priority" }, ["Prioridad"]),
+        prioritySelect,
+      ]),
+      el("div", { class: "field" }, [
+        el("label", { class: "label", for: "edit-category" }, ["Categoría"]),
+        categoryInput,
+      ]),
+      el("div", { class: "field" }, [
+        el("label", { class: "label", for: "edit-due" }, ["Vence"]),
+        dueInput,
+      ]),
+    ]),
+    el("div", { class: "actions" }, [saveBtn, cancelBtn, statusEl]),
+  ]);
+
+  // Insert edit form after the strip (before actions)
+  const stripEl = main.querySelector(".strip");
+  if (stripEl) {
+    stripEl.after(editForm);
+  } else {
+    main.append(editForm);
   }
 
-  button.addEventListener("click", () => {
-    button.disabled = true;
-    status.textContent = "marcando…";
-    patchTask(task.id, { status: "in_progress" })
+  const cancelEdit = (): void => {
+    editForm.remove();
+    // Restore read-only view
+    reload();
+  };
+
+  cancelBtn.addEventListener("click", cancelEdit);
+
+  saveBtn.addEventListener("click", () => {
+    const titleInput = main.querySelector<HTMLInputElement>(".title-input");
+    const newTitle = titleInput?.value.trim() ?? task.title;
+    if (!newTitle) {
+      statusEl.textContent = "el título no puede estar vacío";
+      titleInput?.focus();
+      return;
+    }
+
+    saveBtn.disabled = true;
+    cancelBtn.disabled = true;
+    statusEl.textContent = "guardando…";
+
+    const patch: Record<string, unknown> = {};
+    if (newTitle !== task.title) patch.title = newTitle;
+    if (prioritySelect.value !== (task.priority ?? ""))
+      patch.priority = prioritySelect.value || null;
+    if (categoryInput.value.trim() !== (task.category ?? ""))
+      patch.category = categoryInput.value.trim() || null;
+    if (dueInput.value !== (task.due_date ? task.due_date.slice(0, 10) : "")) {
+      patch.due_date = dueInput.value
+        ? new Date(dueInput.value + "T23:59:59").toISOString()
+        : null;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      cancelEdit();
+      return;
+    }
+
+    patchTask(task.id, patch)
       .then(() => reload())
       .catch((error: unknown) => {
-        // A dead session must route to login like every read path does.
-        // Telling the user to retry here would loop forever on 401.
         if (isUnauthorized(error)) {
           onUnauthorized();
           return;
         }
-        button.disabled = false;
-        status.textContent = "no se pudo marcar — reintentá";
+        saveBtn.disabled = false;
+        cancelBtn.disabled = false;
+        const msg =
+          error instanceof Error ? error.message : "no se pudo guardar";
+        statusEl.textContent = msg;
       });
   });
+}
 
-  main.append(el("div", { class: "actions" }, [button, status]));
+// ── Delete with in-page confirmation ───────────────────────────────────────
+
+function mountDeleteButton(
+  slot: HTMLElement,
+  task: Task,
+  reload: () => void,
+  onUnauthorized: () => void
+): void {
+  const statusEl = el("p", { class: "label", role: "status" }, []);
+  const deleteBtn = el(
+    "button",
+    { type: "button", class: "btn btn--danger" },
+    ["Eliminar"]
+  );
+
+  deleteBtn.addEventListener("click", () => {
+    // Replace with confirmation UI
+    slot.replaceChildren();
+    const confirmBtn = el(
+      "button",
+      { type: "button", class: "btn btn--danger" },
+      ["Confirmar eliminación"]
+    );
+    const cancelBtn = el(
+      "button",
+      { type: "button", class: "btn" },
+      ["Cancelar"]
+    );
+    slot.append(confirmBtn, cancelBtn, statusEl);
+    statusEl.textContent = "¿Segura? Esta acción no se puede deshacer.";
+
+    cancelBtn.addEventListener("click", () => {
+      reload();
+    });
+
+    confirmBtn.addEventListener("click", () => {
+      confirmBtn.disabled = true;
+      cancelBtn.disabled = true;
+      statusEl.textContent = "eliminando…";
+      deleteTask(task.id)
+        .then(() => {
+          // Navigate back to the list after deletion
+          history.pushState({}, "", "/");
+          window.dispatchEvent(new PopStateEvent("popstate"));
+        })
+        .catch((error: unknown) => {
+          if (isUnauthorized(error)) {
+            onUnauthorized();
+            return;
+          }
+          confirmBtn.disabled = false;
+          cancelBtn.disabled = false;
+          const msg =
+            error instanceof Error ? error.message : "no se pudo eliminar";
+          statusEl.textContent = msg;
+        });
+    });
+  });
+
+  slot.append(deleteBtn, statusEl);
 }
