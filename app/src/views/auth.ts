@@ -28,7 +28,7 @@ export function renderLogin(
 
   const form = el(
     "form",
-    { class: "panel login", method: "post", action: "/api/auth/login" },
+    { class: "panel login" },
     [
       el("span", { class: "panel__tag" }, ["Acceso"]),
       el("h1", { class: "title", tabindex: "-1" }, ["Timon"]),
