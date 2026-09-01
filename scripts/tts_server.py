@@ -149,8 +149,8 @@ def _synthesize_with_kokoro(text, voice):
     for result in pipeline(text, voice=voice):
         if result.output is not None and hasattr(result.output, "audio"):
             mx_audio = result.output.audio
-            # mx.array -> numpy
-            np_audio = np.array(mx_audio)
+            # mx.array -> numpy; reshape (1, N) -> (N,) for concatenation
+            np_audio = np.array(mx_audio).reshape(-1)
             audio_chunks.append(np_audio)
     if not audio_chunks:
         raise RuntimeError("kokoro pipeline produced no audio")
