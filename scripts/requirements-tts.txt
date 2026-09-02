@@ -1,0 +1,7 @@
+flask==3.1.0
+numpy>=1.26.4
+# Pinned Kokoro path; tts extra brings misaki[en], espeakng-loader, phonemizer-fork, num2words, spacy
+mlx-audio[tts]==0.2.9 ; sys_platform == "darwin"
+# mlx and transformers ranges required by mlx-audio; keep in sync with whisper venv if shared
+mlx>=0.25.2 ; sys_platform == "darwin"
+transformers>=4.49,<5 ; sys_platform == "darwin"
