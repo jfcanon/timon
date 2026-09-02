@@ -5,9 +5,9 @@
 // "start" affordance is mounted at the end of view after every context panel
 // is in the DOM.
 //
-// Stage 4 additions: inline edit (PATCH title/due/priority/category/parent),
+// Stage 4 additions: inline edit (PATCH title/due/priority/category),
 // complete/undo (PATCH status), and delete (DELETE /api/tasks/:id) with
-// in-page confirmation. Optimistic UI with rollback on error.
+// in-page confirmation. Pessimistic UI (refetch after mutation).
 
 import { deleteTask, getTaskContext, patchTask } from "../api";
 import { cells, clear, el, panel, strip } from "../dom";
@@ -32,7 +32,8 @@ function isUnauthorized(error: unknown): boolean {
 export function renderContext(
   root: HTMLElement,
   id: string,
-  onUnauthorized: () => void
+  onUnauthorized: () => void,
+  onNavigate: (href: string) => void
 ): void {
   clear(root);
   const slot = el("div", { class: "stack" }, [loadingState(2)]);
@@ -45,7 +46,7 @@ export function renderContext(
     getTaskContext(id)
       .then((context) => {
         clear(slot);
-        slot.append(view(context, load, onUnauthorized));
+        slot.append(view(context, load, onUnauthorized, onNavigate));
         const heading = slot.querySelector<HTMLElement>(".title");
         heading?.focus();
       })
@@ -69,7 +70,8 @@ export function renderContext(
 function view(
   context: TaskContext,
   reload: () => void,
-  onUnauthorized: () => void
+  onUnauthorized: () => void,
+  onNavigate: (href: string) => void
 ): DocumentFragment {
   const { task, parent, siblings, subtasks, blockers, blocks } = context;
   const open = activeBlockers(blockers);
@@ -120,7 +122,7 @@ function view(
     );
   }
 
-  mountActions(main, task, open, reload, onUnauthorized);
+  mountActions(main, task, open, reload, onUnauthorized, onNavigate);
 
   return fragment;
 }
@@ -281,7 +283,8 @@ function mountActions(
   task: Task,
   openBlockers: Task[],
   reload: () => void,
-  onUnauthorized: () => void
+  onUnauthorized: () => void,
+  onNavigate: (href: string) => void
 ): void {
   const actionsEl = el("div", { class: "actions" }, []);
 
@@ -327,7 +330,7 @@ function mountActions(
   }
 
   // 3. Complete / undo
-  if (task.status === "in_progress") {
+  if (task.status === "in_progress" || task.status === "pending") {
     const undoStatus = el("p", { class: "label", role: "status" }, []);
     const completeBtn = el(
       "button",
@@ -395,7 +398,7 @@ function mountActions(
 
   // 6. Delete button (with in-page confirmation)
   const deleteSlot = el("div", { class: "actions__row" });
-  mountDeleteButton(deleteSlot, task, reload, onUnauthorized);
+  mountDeleteButton(deleteSlot, task, reload, onUnauthorized, onNavigate);
   actionsEl.append(deleteSlot);
 
   main.append(actionsEl);
@@ -527,13 +530,20 @@ function mountEditForm(
 
     const patch: Record<string, unknown> = {};
     if (newTitle !== task.title) patch.title = newTitle;
-    if (prioritySelect.value !== (task.priority ?? ""))
-      patch.priority = prioritySelect.value || null;
+    // Only include priority if a valid value is selected; "sin prioridad" keeps existing
+    if (prioritySelect.value && prioritySelect.value !== (task.priority ?? "")) {
+      patch.priority = prioritySelect.value;
+    }
     if (categoryInput.value.trim() !== (task.category ?? ""))
       patch.category = categoryInput.value.trim() || null;
     if (dueInput.value !== (task.due_date ? task.due_date.slice(0, 10) : "")) {
+      // Use local date components to avoid timezone shift
       patch.due_date = dueInput.value
-        ? new Date(dueInput.value + "T23:59:59").toISOString()
+        ? (() => {
+            const [year, month, day] = dueInput.value.split("-").map(Number);
+            const date = new Date(year, month - 1, day, 23, 59, 59);
+            return date.toISOString();
+          })()
         : null;
     }
 
@@ -564,7 +574,8 @@ function mountDeleteButton(
   slot: HTMLElement,
   task: Task,
   reload: () => void,
-  onUnauthorized: () => void
+  onUnauthorized: () => void,
+  onNavigate: (href: string) => void
 ): void {
   const statusEl = el("p", { class: "label", role: "status" }, []);
   const deleteBtn = el(
@@ -599,9 +610,8 @@ function mountDeleteButton(
       statusEl.textContent = "eliminando…";
       deleteTask(task.id)
         .then(() => {
-          // Navigate back to the list after deletion
-          history.pushState({}, "", "/");
-          window.dispatchEvent(new PopStateEvent("popstate"));
+          // Navigate back to the list after deletion (replaceState so Back doesn't return to deleted task)
+          onNavigate("/");
         })
         .catch((error: unknown) => {
           if (isUnauthorized(error)) {

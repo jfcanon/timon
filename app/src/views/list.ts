@@ -50,7 +50,8 @@ export function renderList(
   root: HTMLElement,
   filters: ListFilters,
   onFilter: (next: ListFilters) => void,
-  onUnauthorized: () => void
+  onUnauthorized: () => void,
+  onNavigate: (href: string) => void
 ): void {
   clear(root);
 
@@ -88,8 +89,7 @@ export function renderList(
           categories: categoriesOf(tasks),
           onCreated: (taskId) => {
             // Navigate to the newly created task's context view
-            history.pushState({}, "", `/t/${taskId}`);
-            window.dispatchEvent(new PopStateEvent("popstate"));
+            onNavigate(`/t/${taskId}`);
           },
           onUnauthorized,
         });

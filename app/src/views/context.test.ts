@@ -54,6 +54,7 @@ function unauthorized(): Error {
 }
 
 let root: HTMLElement;
+const onNavigate = vi.fn();
 
 /** Let the view's promise chain settle. */
 const settle = (): Promise<void> =>
@@ -65,6 +66,7 @@ beforeEach(() => {
   document.body.append(root);
   getTaskContext.mockReset();
   patchTask.mockReset();
+  onNavigate.mockReset();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -75,7 +77,7 @@ describe("renderContext — the start affordance", () => {
     patchTask.mockRejectedValue(unauthorized());
     const onUnauthorized = vi.fn();
 
-    renderContext(root, "t-1", onUnauthorized);
+    renderContext(root, "t-1", onUnauthorized, onNavigate);
     await settle();
 
     const button = root.querySelector<HTMLButtonElement>(".actions button");
@@ -92,7 +94,7 @@ describe("renderContext — the start affordance", () => {
     patchTask.mockRejectedValue(new Error("boom"));
     const onUnauthorized = vi.fn();
 
-    renderContext(root, "t-1", onUnauthorized);
+    renderContext(root, "t-1", onUnauthorized, onNavigate);
     await settle();
 
     const button = root.querySelector<HTMLButtonElement>(".actions button");
@@ -108,7 +110,7 @@ describe("renderContext — the start affordance", () => {
     getTaskContext.mockResolvedValue(context());
     patchTask.mockResolvedValue({ task: task({ status: "in_progress" }) });
 
-    renderContext(root, "t-1", vi.fn());
+    renderContext(root, "t-1", vi.fn(), onNavigate);
     await settle();
     root.querySelector<HTMLButtonElement>(".actions button")?.click();
     await settle();
@@ -123,7 +125,7 @@ describe("renderContext — the start affordance", () => {
       })
     );
 
-    renderContext(root, "t-1", vi.fn());
+    renderContext(root, "t-1", vi.fn(), onNavigate);
     await settle();
 
     const button = root.querySelector<HTMLButtonElement>(".actions button");
@@ -139,7 +141,7 @@ describe("renderContext — the start affordance", () => {
       })
     );
 
-    renderContext(root, "t-1", vi.fn());
+    renderContext(root, "t-1", vi.fn(), onNavigate);
     await settle();
 
     const button = root.querySelector<HTMLButtonElement>(".actions button");
@@ -153,7 +155,7 @@ describe("renderContext — the start affordance", () => {
       task: task({ status: "done" }),
     });
 
-    renderContext(root, "t-1", vi.fn());
+    renderContext(root, "t-1", vi.fn(), onNavigate);
     await settle();
 
     // No "Empezar" button, but there is a "Reabrir" button
@@ -179,7 +181,7 @@ describe("renderContext — context before action", () => {
       })
     );
 
-    renderContext(root, "t-1", vi.fn());
+    renderContext(root, "t-1", vi.fn(), onNavigate);
     await settle();
 
     const panels = [...root.querySelectorAll(".panel__tag")].map(
@@ -205,7 +207,7 @@ describe("renderContext — context before action", () => {
       })
     );
 
-    renderContext(root, "t-1", vi.fn());
+    renderContext(root, "t-1", vi.fn(), onNavigate);
     await settle();
 
     const row = root.querySelector(".row__done");
@@ -217,7 +219,7 @@ describe("renderContext — context before action", () => {
       context({ task: task({ title: "<img src=x onerror=alert(1)>" }) })
     );
 
-    renderContext(root, "t-1", vi.fn());
+    renderContext(root, "t-1", vi.fn(), onNavigate);
     await settle();
 
     expect(root.querySelector("img")).toBeNull();
@@ -230,7 +232,7 @@ describe("renderContext — context before action", () => {
     const missing = Object.assign(new Error("task_not_found"), { status: 404 });
     getTaskContext.mockRejectedValue(missing);
 
-    renderContext(root, "t-1", vi.fn());
+    renderContext(root, "t-1", vi.fn(), onNavigate);
     await settle();
 
     expect(root.textContent).toContain("Esa tarea no existe");
@@ -240,7 +242,7 @@ describe("renderContext — context before action", () => {
     getTaskContext.mockRejectedValue(unauthorized());
     const onUnauthorized = vi.fn();
 
-    renderContext(root, "t-1", onUnauthorized);
+    renderContext(root, "t-1", onUnauthorized, onNavigate);
     await settle();
 
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
