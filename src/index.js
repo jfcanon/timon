@@ -210,7 +210,7 @@ async function handleCreateTask(request, env) {
     });
   }
 
-  const { text, device_id, ts, priority, category } = body;
+  const { text, device_id, ts, priority, category, parent_id } = body;
   if (!text || typeof text !== "string" || text.trim() === "") {
     return new Response(JSON.stringify({ error: "text_required" }), {
       status: 400,
@@ -257,6 +257,20 @@ async function handleCreateTask(request, env) {
       });
     }
     intent.category = category;
+  }
+  // Validate parent exists if provided
+  if (parent_id !== undefined && parent_id !== null && parent_id !== "") {
+    const parentExists = await db
+      .prepare("SELECT id FROM tasks WHERE id = ?")
+      .bind(parent_id)
+      .first();
+    if (!parentExists) {
+      return new Response(JSON.stringify({ error: "parent_not_found" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    intent.parent_id = parent_id;
   }
   const taskId = await createTask(db, intent, "owner", device_id || null);
 
@@ -348,7 +362,7 @@ async function handlePatchTask(request, taskId, env) {
   }
 
   if (body.priority !== undefined) {
-    if (!["high", "medium", "low"].includes(body.priority)) {
+    if (body.priority !== null && !["high", "medium", "low"].includes(body.priority)) {
       return new Response(JSON.stringify({ error: "invalid_priority" }), {
         status: 400,
         headers: { "content-type": "application/json" },

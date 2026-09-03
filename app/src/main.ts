@@ -80,14 +80,23 @@ function route(): void {
   masthead();
   const id = contextIdFromPath(location.pathname);
   if (id) {
-    renderContext(main, id, () => showLogin("Tu sesión expiró."));
+    renderContext(
+      main,
+      id,
+      () => showLogin("Tu sesión expiró."),
+      (href) => {
+        if (href !== currentHref()) history.replaceState({}, "", href);
+        route();
+      }
+    );
     return;
   }
   renderList(
     main,
     filtersFromSearch(location.search),
     (next) => navigate(listHref(next)),
-    () => showLogin("Tu sesión expiró.")
+    () => showLogin("Tu sesión expiró."),
+    (href) => navigate(href)
   );
 }
 

@@ -87,6 +87,39 @@ export function patchTask(
   });
 }
 
+export interface CreateTaskPayload {
+  text: string;
+  device_id?: string;
+  ts?: string;
+  priority?: string;
+  category?: string;
+  parent_id?: string | null;
+}
+
+export async function createTask(
+  payload: CreateTaskPayload
+): Promise<{ task_id: string; task: Task }> {
+  return request<{ task_id: string; task: Task }>("/api/tasks", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      text: payload.text,
+      device_id: payload.device_id ?? "web",
+      ts: payload.ts,
+      priority: payload.priority,
+      category: payload.category,
+      parent_id: payload.parent_id,
+    }),
+  });
+}
+
+export async function deleteTask(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(
+    `/api/tasks/${encodeURIComponent(id)}`,
+    { method: "DELETE" }
+  );
+}
+
 export async function login(password: string): Promise<void> {
   await request<{ ok: boolean }>("/api/auth/login", {
     method: "POST",
