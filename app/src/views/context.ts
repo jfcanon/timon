@@ -16,6 +16,7 @@ import {
   countLabel,
   dueLabel,
   isDone,
+  parseDue,
   priorityClass,
   priorityLabel,
   statusLabel,
@@ -467,7 +468,15 @@ function mountEditForm(
     type: "date",
     id: "edit-due",
     name: "due_date",
-    value: task.due_date ? task.due_date.slice(0, 10) : "",
+    value: (() => {
+      if (!task.due_date) return "";
+      const parsed = parseDue(task.due_date);
+      if (!parsed) return task.due_date.slice(0, 10);
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, "0");
+      const d = String(parsed.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    })(),
   }) as HTMLInputElement;
 
   const saveBtn = el(
@@ -536,7 +545,16 @@ function mountEditForm(
     }
     if (categoryInput.value.trim() !== (task.category ?? ""))
       patch.category = categoryInput.value.trim() || null;
-    if (dueInput.value !== (task.due_date ? task.due_date.slice(0, 10) : "")) {
+    const originalDueLocal = (() => {
+      if (!task.due_date) return "";
+      const parsed = parseDue(task.due_date);
+      if (!parsed) return task.due_date.slice(0, 10);
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, "0");
+      const d = String(parsed.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    })();
+    if (dueInput.value !== originalDueLocal) {
       // Use local date components to avoid timezone shift
       patch.due_date = dueInput.value
         ? (() => {

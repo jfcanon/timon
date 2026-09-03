@@ -151,7 +151,11 @@ function buildForm(
     if (categoryInput.value.trim()) payload.category = categoryInput.value.trim();
     if (dueInput.value) {
       // Convert date-only to ISO datetime at end of day in local time
-      const date = new Date(dueInput.value + "T23:59:59");
+      // (new Date("2026-09-05T23:59:59") parses as local, but
+      //  new Date("2026-09-05T23:59:59") string-concatenated still triggers
+      //  the same UTC shift when read back via slice — use local components)
+      const [year, month, day] = dueInput.value.split("-").map(Number);
+      const date = new Date(year, month - 1, day, 23, 59, 59);
       payload.ts = date.toISOString();
     }
     if (parentId) payload.parent_id = parentId;
