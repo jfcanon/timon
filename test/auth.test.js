@@ -28,7 +28,11 @@ function makeEnv(overrides = {}) {
     },
     SESSION: {
       idFromName: vi.fn(() => "mock-id"),
-      get: vi.fn(() => ({ addTask: vi.fn(async () => ({})) })),
+      get: vi.fn(() => ({
+        addTask: vi.fn(async () => ({})),
+        updateTask: vi.fn(async () => ({})),
+        removeTask: vi.fn(async () => ({})),
+      })),
     },
     ...overrides,
   };

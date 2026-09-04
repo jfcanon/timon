@@ -4,6 +4,7 @@ import {
   createTask,
   ensureSchema,
   getTaskWithContext,
+  getDecoratedTask,
   listTasks,
   updateTask,
   deleteTask,
@@ -21,6 +22,27 @@ import {
 import { checkRateLimit, resetRateLimit, maybeCleanup } from "./lib/rate-limit.js";
 
 export { SessionDO };
+
+const SESSION_NAME = "default";
+
+function sessionStub(env) {
+  return env.SESSION.get(env.SESSION.idFromName(SESSION_NAME));
+}
+
+async function broadcastAdded(env, task) {
+  if (!task) return;
+  await sessionStub(env).addTask(task);
+}
+
+async function broadcastUpdated(env, task) {
+  if (!task) return;
+  await sessionStub(env).updateTask(task);
+}
+
+async function broadcastDeleted(env, task) {
+  if (!task) return;
+  await sessionStub(env).removeTask(task);
+}
 
 export default {
   async fetch(request, env) {
@@ -132,11 +154,7 @@ async function handleWebSocketConnect(request, env) {
     }
   }
 
-  const sessionId = request.headers.get("x-session-id") || "default";
-  const id = env.SESSION.idFromName(sessionId);
-  const stub = env.SESSION.get(id);
-
-  return stub.fetch(request);
+  return sessionStub(env).fetch(request);
 }
 
 // Browser login: compare the password against the APP_PASSWORD Worker secret,
@@ -245,11 +263,8 @@ async function handleVoice(request, env) {
   await ensureSchema(db);
   const deviceId = request.headers.get("x-device-id") || null;
   const taskId = await createTask(db, intent, "owner", deviceId);
-
-  const sessionId = request.headers.get("x-session-id") || "default";
-  const id = env.SESSION.idFromName(sessionId);
-  const stub = env.SESSION.get(id);
-  await stub.addTask(taskId, intent);
+  const task = await getDecoratedTask(db, taskId);
+  await broadcastAdded(env, task);
 
   return new Response(
     JSON.stringify({
@@ -338,16 +353,8 @@ async function handleCreateTask(request, env) {
     intent.parent_id = parent_id;
   }
   const taskId = await createTask(db, intent, "owner", device_id || null);
-
-  const sessionId = request.headers.get("x-session-id") || "default";
-  const id = env.SESSION.idFromName(sessionId);
-  const stub = env.SESSION.get(id);
-  await stub.addTask(taskId, intent);
-
-  const task = await db
-    .prepare("SELECT * FROM tasks WHERE id = ?")
-    .bind(taskId)
-    .first();
+  const task = await getDecoratedTask(db, taskId);
+  await broadcastAdded(env, task);
 
   return new Response(
     JSON.stringify({ task_id: taskId, task, status: "created" }),
@@ -436,7 +443,7 @@ async function handlePatchTask(request, taskId, env) {
   }
 
   const existing = await db
-    .prepare(`SELECT id FROM tasks WHERE id = ?`)
+    .prepare(`SELECT * FROM tasks WHERE id = ?`)
     .bind(taskId)
     .first();
   if (!existing) {
@@ -461,10 +468,17 @@ async function handlePatchTask(request, taskId, env) {
 
   await updateTask(db, taskId, updates);
 
-  const task = await db
-    .prepare(`SELECT * FROM tasks WHERE id = ?`)
-    .bind(taskId)
-    .first();
+  const task = await getDecoratedTask(db, taskId);
+  await broadcastUpdated(env, task);
+
+  if (updates.parent_id !== undefined) {
+    if (existing.parent_id && existing.parent_id !== updates.parent_id) {
+      await broadcastUpdated(env, await getDecoratedTask(db, existing.parent_id));
+    }
+    if (updates.parent_id) {
+      await broadcastUpdated(env, await getDecoratedTask(db, updates.parent_id));
+    }
+  }
 
   return new Response(JSON.stringify({ task }), {
     status: 200,
@@ -476,10 +490,7 @@ async function handleDeleteTask(taskId, env) {
   const db = env.TIMON_META;
   await ensureSchema(db);
 
-  const existing = await db
-    .prepare(`SELECT id FROM tasks WHERE id = ?`)
-    .bind(taskId)
-    .first();
+  const existing = await getDecoratedTask(db, taskId);
   if (!existing) {
     return new Response(JSON.stringify({ error: "task_not_found" }), {
       status: 404,
@@ -488,6 +499,7 @@ async function handleDeleteTask(taskId, env) {
   }
 
   await deleteTask(db, taskId);
+  await broadcastDeleted(env, existing);
 
   return new Response(JSON.stringify({ deleted: taskId }), {
     status: 200,
@@ -561,6 +573,9 @@ async function handleAddDependency(request, taskId, env) {
     throw err;
   }
 
+  await broadcastUpdated(env, await getDecoratedTask(db, taskId));
+  await broadcastUpdated(env, await getDecoratedTask(db, dependsOnId));
+
   return new Response(
     JSON.stringify({
       task_id: taskId,
@@ -591,6 +606,11 @@ async function handleRemoveDependency(taskId, dependsOnId, env) {
 
   const result = await removeDependency(db, taskId, dependsOnId);
   const removed = (result?.meta?.changes ?? 0) > 0;
+
+  if (removed) {
+    await broadcastUpdated(env, await getDecoratedTask(db, taskId));
+    await broadcastUpdated(env, await getDecoratedTask(db, dependsOnId));
+  }
 
   return new Response(JSON.stringify({ removed }), {
     status: 200,

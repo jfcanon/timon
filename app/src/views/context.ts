@@ -10,6 +10,7 @@
 // in-page confirmation. Pessimistic UI (refetch after mutation).
 
 import { deleteTask, getTaskContext, patchTask } from "../api";
+import { attachLiveView } from "../live";
 import { cells, clear, el, panel, strip } from "../dom";
 import {
   activeBlockers,
@@ -39,16 +40,22 @@ export function renderContext(
   const slot = el("div", { class: "stack" }, [loadingState(2)]);
   root.append(slot);
 
+  const paint = (context: TaskContext, focusTitle: boolean): void => {
+    clear(slot);
+    slot.append(view(context, load, onUnauthorized, onNavigate));
+    if (focusTitle) {
+      const heading = slot.querySelector<HTMLElement>(".title");
+      heading?.focus();
+    }
+  };
+
   const load = (): void => {
     clear(slot);
     slot.append(loadingState(2));
 
     getTaskContext(id)
       .then((context) => {
-        clear(slot);
-        slot.append(view(context, load, onUnauthorized, onNavigate));
-        const heading = slot.querySelector<HTMLElement>(".title");
-        heading?.focus();
+        paint(context, true);
       })
       .catch((error: unknown) => {
         if (isUnauthorized(error)) {
@@ -63,6 +70,29 @@ export function renderContext(
         slot.append(isMissing ? notFoundState() : errorState(error, load));
       });
   };
+
+  attachLiveView((event) => {
+    if (event.type === "task_deleted" && event.task?.id === id) {
+      onNavigate("/");
+      return;
+    }
+    if (slot.querySelector(".edit-form")) return;
+    getTaskContext(id)
+      .then((context) => {
+        paint(context, false);
+      })
+      .catch((error: unknown) => {
+        if (isUnauthorized(error)) {
+          onUnauthorized();
+          return;
+        }
+        const isMissing =
+          typeof error === "object" &&
+          error !== null &&
+          (error as { status?: number }).status === 404;
+        if (isMissing) onNavigate("/");
+      });
+  });
 
   load();
 }

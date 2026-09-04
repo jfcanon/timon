@@ -10,6 +10,11 @@
 import { listTasks, type ListFilters } from "../api";
 import { clear, el } from "../dom";
 import { countLabel, type Task } from "../format";
+import {
+  applyLiveTasks,
+  attachLiveView,
+  prefersReducedMotion,
+} from "../live";
 import { buildTree, type TreeNode } from "../tree";
 import { renderCreateForm } from "./create";
 import { taskCard } from "./card";
@@ -23,14 +28,23 @@ const STATUS_OPTIONS: [string, string][] = [
   ["cancelled", "cancelada"],
 ];
 
-function renderTree(nodes: TreeNode[], nested: boolean): HTMLElement {
+function renderTree(
+  nodes: TreeNode[],
+  nested: boolean,
+  enteredId: string | null
+): HTMLElement {
   return el(
     "ol",
     { class: `tasks${nested ? " tasks--nested" : ""}` },
     nodes.map((node) =>
       el("li", {}, [
-        taskCard(node.task, { showCrumb: !nested }),
-        node.children.length > 0 ? renderTree(node.children, true) : null,
+        taskCard(node.task, {
+          showCrumb: !nested,
+          entering: Boolean(enteredId && node.task.id === enteredId),
+        }),
+        node.children.length > 0
+          ? renderTree(node.children, true, enteredId)
+          : null,
       ])
     )
   );
@@ -70,39 +84,46 @@ export function renderList(
 
   root.append(heading, filterSlot, createSlot, readout, results);
 
+  let tasks: Task[] = [];
+
+  const paint = (enteredId: string | null): void => {
+    readout.textContent = countLabel(tasks.length, "tarea", "tareas");
+    clear(results);
+    if (tasks.length === 0) {
+      const isFiltered = Boolean(filters.status || filters.category);
+      results.append(
+        emptyState(isFiltered, isFiltered ? () => onFilter({}) : undefined)
+      );
+      return;
+    }
+    const mark =
+      enteredId && !prefersReducedMotion() ? enteredId : null;
+    results.append(renderTree(buildTree(tasks), false, mark));
+  };
+
   const load = (): void => {
     clear(results);
     results.append(loadingState());
     readout.textContent = "cargando…";
 
     listTasks(filters)
-      .then((tasks) => {
-        readout.textContent = countLabel(tasks.length, "tarea", "tareas");
+      .then((rows) => {
+        tasks = rows;
         clear(filterSlot);
         filterSlot.append(
           filterForm(filters, categoriesOf(tasks), onFilter)
         );
 
-        // Render create form with known categories
         clear(createSlot);
         renderCreateForm(createSlot, {
           categories: categoriesOf(tasks),
           onCreated: (taskId) => {
-            // Navigate to the newly created task's context view
             onNavigate(`/t/${taskId}`);
           },
           onUnauthorized,
         });
 
-        clear(results);
-        if (tasks.length === 0) {
-          const isFiltered = Boolean(filters.status || filters.category);
-          results.append(
-            emptyState(isFiltered, isFiltered ? () => onFilter({}) : undefined)
-          );
-          return;
-        }
-        results.append(renderTree(buildTree(tasks), false));
+        paint(null);
       })
       .catch((error: unknown) => {
         if (error instanceof Error && error.name === "UnauthorizedError") {
@@ -114,6 +135,12 @@ export function renderList(
         results.append(errorState(error, load));
       });
   };
+
+  attachLiveView((event) => {
+    const next = applyLiveTasks(tasks, filters, event);
+    tasks = next.tasks;
+    paint(next.enteredId);
+  });
 
   load();
 }

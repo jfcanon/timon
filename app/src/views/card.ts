@@ -15,6 +15,7 @@ import {
 export interface CardOptions {
   /** Suppress the breadcrumb when the card is already nested under its parent. */
   showCrumb: boolean;
+  entering?: boolean;
 }
 
 export function taskCard(task: Task, options: CardOptions): HTMLElement {
@@ -94,9 +95,13 @@ export function taskCard(task: Task, options: CardOptions): HTMLElement {
   children.push(el("ul", { class: "tags" }, tags));
   children.push(strip());
 
+  const enterClass = options.entering ? " card--enter" : "";
   return el(
     "article",
-    { class: `card${done ? " card__done" : ""}` },
+    {
+      class: `card${done ? " card__done" : ""}${enterClass}`,
+      "data-task-id": task.id,
+    },
     children
   );
 }

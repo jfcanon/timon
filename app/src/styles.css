@@ -223,6 +223,33 @@ body {
   gap: 0.75rem;
 }
 
+.live {
+  margin: 0;
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-dim);
+}
+
+.live[data-state="live"] {
+  color: var(--accent);
+}
+
+.card--enter {
+  animation: card-enter 180ms ease-out;
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-0.4rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* -------------------------------------------------------------- controls ---
  * Real <button>, real <select>. Hierarchy from fill: the primary action is the
  * solid element among wireframes.

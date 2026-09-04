@@ -5,6 +5,8 @@ export class SessionDO extends DurableObject {
     super(ctx, env);
     this.ctx = ctx;
     this.env = env;
+    this.tasks = [];
+    this.subscribers = [];
     this.ctx.blockConcurrencyWhile(async () => {
       this.tasks = (await this.ctx.storage.get("tasks")) || [];
       this.subscribers = [];
@@ -14,10 +16,11 @@ export class SessionDO extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/ws") {
-      if (request.headers.get("Upgrade") === "websocket") {
-        return this.handleWebSocketUpgrade(request);
-      }
+    if (request.headers.get("Upgrade") === "websocket") {
+      return this.handleWebSocketUpgrade(request);
+    }
+
+    if (url.pathname === "/ws" || url.pathname === "/api/ws") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }
 
@@ -30,10 +33,7 @@ export class SessionDO extends DurableObject {
 
     if (url.pathname === "/tasks" && request.method === "POST") {
       const body = await request.json();
-      this.tasks.push(body);
-      await this.ctx.storage.put("tasks", this.tasks);
-      this.broadcast(JSON.stringify({ type: "task_added", task: body }));
-      return new Response(JSON.stringify({ ok: true }), {
+      return new Response(JSON.stringify({ ok: true, task: await this.addTask(body) }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -58,7 +58,7 @@ export class SessionDO extends DurableObject {
     try {
       const data = JSON.parse(message);
       if (data.type === "subscribe") {
-        this.subscribers.push(ws);
+        if (!this.subscribers.includes(ws)) this.subscribers.push(ws);
         ws.send(JSON.stringify({ type: "subscribed", tasks: this.tasks }));
       }
     } catch (err) {
@@ -70,8 +70,15 @@ export class SessionDO extends DurableObject {
     this.subscribers = this.subscribers.filter((s) => s !== ws);
   }
 
+  sockets() {
+    if (typeof this.ctx.getWebSockets === "function") {
+      return this.ctx.getWebSockets();
+    }
+    return this.subscribers;
+  }
+
   broadcast(message) {
-    for (const ws of this.subscribers) {
+    for (const ws of this.sockets()) {
       try {
         ws.send(message);
       } catch (err) {
@@ -80,11 +87,35 @@ export class SessionDO extends DurableObject {
     }
   }
 
-  async addTask(taskId, intent) {
-    const task = { taskId, intent, addedAt: new Date().toISOString() };
-    this.tasks.push(task);
+  async persist() {
     await this.ctx.storage.put("tasks", this.tasks);
+  }
+
+  async addTask(task) {
+    const id = task.id;
+    this.tasks = this.tasks.filter((t) => t.id !== id);
+    this.tasks.push(task);
+    await this.persist();
     this.broadcast(JSON.stringify({ type: "task_added", task }));
     return task;
+  }
+
+  async updateTask(task) {
+    const id = task.id;
+    const idx = this.tasks.findIndex((t) => t.id === id);
+    if (idx >= 0) this.tasks[idx] = task;
+    else this.tasks.push(task);
+    await this.persist();
+    this.broadcast(JSON.stringify({ type: "task_updated", task }));
+    return task;
+  }
+
+  async removeTask(task) {
+    const payload = typeof task === "string" ? { id: task } : task;
+    const id = payload.id;
+    this.tasks = this.tasks.filter((t) => t.id !== id);
+    await this.persist();
+    this.broadcast(JSON.stringify({ type: "task_deleted", task: payload }));
+    return payload;
   }
 }
