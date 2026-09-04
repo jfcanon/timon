@@ -165,6 +165,60 @@ describe("the ESP32 voice path", () => {
   });
 });
 
+describe("the /api/ws gate", () => {
+  function upgrade(headers) {
+    return new Request(url("/api/ws"), { headers: { upgrade: "websocket", ...headers } });
+  }
+
+  it("refuses an anonymous upgrade", async () => {
+    const response = await worker.fetch(upgrade({}), makeEnv());
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "unauthorized" });
+  });
+
+  it("refuses a foreign Origin even with a valid credential", async () => {
+    // A WebSocket handshake is not subject to CORS, so without this check a
+    // page on any origin could open a socket in a logged-in owner's browser
+    // and read every task that gets broadcast.
+    const env = makeEnv();
+    const response = await worker.fetch(
+      upgrade({
+        authorization: `Bearer ${env.TIMON_API_KEY}`,
+        origin: "https://evil.example",
+      }),
+      env
+    );
+    expect(response.status).toBe(403);
+    expect(env.SESSION.get).not.toHaveBeenCalled();
+  });
+
+  it("lets the app's own origins through", async () => {
+    for (const origin of [
+      "https://timon-worker.example.com",
+      "https://timon.ygdcbtmc4u.uk",
+      "https://timon-worker.ygdcbtmc4u.workers.dev",
+    ]) {
+      const env = makeEnv();
+      const response = await worker.fetch(
+        upgrade({ authorization: `Bearer ${env.TIMON_API_KEY}`, origin }),
+        env
+      );
+      expect(response.status).not.toBe(403);
+      expect(env.SESSION._stub.fetch).toHaveBeenCalled();
+    }
+  });
+
+  it("lets a header-less client through — the ESP32 sends no Origin", async () => {
+    const env = makeEnv();
+    const response = await worker.fetch(
+      upgrade({ authorization: `Bearer ${env.TIMON_API_KEY}` }),
+      env
+    );
+    expect(response.status).not.toBe(403);
+    expect(env.SESSION._stub.fetch).toHaveBeenCalled();
+  });
+});
+
 describe("Durable Object sharding", () => {
   it("always resolves the same instance, whatever x-session-id says", async () => {
     const env = makeEnv();
