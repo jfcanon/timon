@@ -223,6 +223,37 @@ body {
   gap: 0.75rem;
 }
 
+/* ------------------------------------------------------------------ live ---
+ * Connection state, stated once and quietly. It sits in the masthead so it is
+ * always reachable but never competes with a task for attention.
+ */
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-dim);
+}
+
+.live__dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.live--live .live__dot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.live--reconnecting {
+  color: hsl(var(--hue) 30% 58%);
+}
+
 /* -------------------------------------------------------------- controls ---
  * Real <button>, real <select>. Hierarchy from fill: the primary action is the
  * solid element among wireframes.
@@ -464,6 +495,26 @@ body {
 .card:focus-within {
   background: var(--fill-lit);
   border-color: var(--line);
+}
+
+/* A card that just arrived over the socket. The highlight is colour only —
+ * nothing moves, nothing slides in, at any motion preference. The global
+ * reduced-motion rule below flattens the fade to an instant settle, which is
+ * the honest behaviour: the card is simply there.
+ */
+.card--live {
+  animation: card-live 1.4s ease-out;
+}
+
+@keyframes card-live {
+  from {
+    border-color: var(--accent);
+    background: var(--fill-lit);
+  }
+  to {
+    border-color: var(--line-soft);
+    background: var(--fill);
+  }
 }
 
 .card__crumb {

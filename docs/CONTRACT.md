@@ -22,7 +22,7 @@ All routes defined in `src/index.js`:
 | DELETE | `/api/tasks/:taskId` | Bearer **or** cookie ¹ | — | `{ "deleted": "uuid" }` |
 | POST | `/api/tasks/:taskId/dependencies` | Bearer **or** cookie ¹ | `{ "depends_on_id": "uuid (required)" }` | `{ "task_id": "uuid", "depends_on_id": "uuid", "status": "created" }` (201). Errors: `400 depends_on_id_required` / `cannot_depend_on_self` / `depends_on_not_found` / `dependency_cycle_detected`; `404 task_not_found`. Idempotent if the edge already exists. |
 | DELETE | `/api/tasks/:taskId/dependencies/:dependsOnId` | Bearer **or** cookie ¹ | — | `{ "removed": true\|false }` (200). `removed` is `false` when no row was deleted. `404 task_not_found` if `:taskId` does not exist. |
-| GET | `/api/ws` | Bearer **or** cookie ¹ | WebSocket upgrade | WebSocket connection to `SessionDO` |
+| GET | `/api/ws` | Bearer **or** cookie ¹ | WebSocket upgrade | `101 Switching Protocols` → `SessionDO`. `401` anonymous; `403` when `Origin` is set and not allowlisted (a WebSocket handshake is not subject to CORS). Cookies ride the handshake because it is a plain GET — which is why the browser can connect without a Bearer key it must never hold. |
 | * | * | — | — | `{ "status": 404, "body": "Not found" }` |
 
 ¹ **The gate accepts either credential** (`isAuthorized` in `src/lib/auth.js`, since NID-526): an `Authorization: Bearer <TIMON_API_KEY>` header — the ESP32 / apollo voice path — **or** a valid `timon_session` HttpOnly cookie — the browser. `/api/auth/login` and `/api/auth/logout` sit outside the gate by necessity, since a browser has no Bearer key. The gate is scoped to `/api` and `/api/*`; every other path is served from the static assets binding.
@@ -31,16 +31,49 @@ All routes defined in `src/index.js`:
 
 ⚠ **`GET /api/tasks` has no `LIMIT` and no cursor.** It returns every matching row, and `decorateTasks` additionally reads the `tasks` and `dependencies` index tables whole. This is bounded only by table size (179 rows as of 2026-08-29). Pagination is the next thing this endpoint needs. The previous scale wall here was a hard 500: decoration used to build `WHERE id IN (?, …)` from every result id, and D1 caps a query at 100 bound parameters, so the endpoint threw a 1101 on every unfiltered read once the table passed 100 rows (NID-527).
 
-### SessionDO Routes (Durable Object `SessionDO`)
+### SessionDO (Durable Object `SessionDO`) — live fan-out relay
 
-| Method | Path | Auth | Request Body | Response JSON Shape |
-|--------|------|------|--------------|---------------------|
-| GET | `/ws` | WebSocket upgrade | — | `101 Switching Protocols` |
-| GET | `/tasks` | None | — | `{ "tasks": [{ "taskId": "uuid", "intent": "object", "addedAt": "ISO8601" }] }` |
-| POST | `/tasks` | None | `{ "taskId": "uuid", "intent": "object", ... }` | `{ "ok": true }` |
+Reachable only through the Worker's authorized `/api/ws` route. It holds no task
+state: D1 is the source of truth, and this object exists to push a mutation to
+the tabs that are already looking at the data. Since NID-529 it accepts an
+upgrade on whatever path the Worker forwards (`/api/ws`) and answers `426` to a
+non-upgrade request. The `/tasks` HTTP routes and the persisted `this.tasks`
+array were removed — nothing read them, and they described a shape that no
+longer matched the broadcast.
 
-WebSocket messages (client → server): `{ "type": "subscribe" }`
-WebSocket messages (server → client): `{ "type": "subscribed", "tasks": [...] }` or `{ "type": "task_added", "task": {...} }` or `{ "type": "error", "message": "string" }`
+**There is exactly one instance**, named `"default"` (`SESSION_DO_NAME` in
+`src/lib/live.js`). The `x-session-id` header no longer selects one: a browser
+cannot set a header on a WebSocket upgrade, so a tab was pinned to `"default"`
+while any header-sending client published into a room nobody was listening in.
+
+| Direction | Message |
+|-----------|---------|
+| client → server | `{ "type": "ping" }` → `{ "type": "pong" }` (keepalive; the client sends one every 25s) |
+| client → server | `{ "type": "subscribe" }` → `{ "type": "subscribed" }` (accepted for the pre-NID-529 client; a socket is subscribed the moment it connects) |
+| server → client | `{ "type": "task_added", "task": { …row } }` |
+| server → client | `{ "type": "task_updated", "task": { …row } }` |
+| server → client | `{ "type": "task_deleted", "task_id": "uuid" }` |
+| server → client | `{ "type": "error", "error": "invalid_json\|unknown_message" }` |
+
+⚠ **`task` is the full `GET /api/tasks` row**, decoration included
+(`parent_title`, `subtask_count`, `blocked_by`, `blocked_by_count`,
+`blocked_by_open_count`) — see `getTaskRow` in `src/lib/store.js`. It used to be
+the intent wrapper `{ taskId, intent, addedAt }`, which rendered a half-empty
+card. `test/live.test.js` asserts the two shapes stay identical.
+
+**What broadcasts, and when:**
+
+| Route | Events |
+|-------|--------|
+| `POST /api/tasks`, `POST /api/voice` | `task_added` for the new task, plus `task_updated` for its parent (whose `subtask_count` moved) |
+| `PATCH /api/tasks/:id` | `task_updated` for the task, plus `task_updated` for the old and new parent when `parent_id` changed |
+| `DELETE /api/tasks/:id` | `task_deleted`, plus `task_updated` for the parent, the orphaned children and both ends of every dependency edge that was dropped |
+| `POST\|DELETE /api/tasks/:id/dependencies…` | `task_updated` for **both** ends, so an open context view's blockers and "Bloquea a" panels cannot go stale. A `DELETE` that removed nothing is silent. |
+
+A failed broadcast never fails the request: the D1 write has already committed,
+and answering 500 would make apollo retry a `POST /api/tasks` that succeeded and
+duplicate the task. Failures are logged; a tab that missed an event resyncs on
+its next reconnect.
 
 ---
 
@@ -67,12 +100,12 @@ WebSocket messages (server → client): `{ "type": "subscribed", "tasks": [...] 
 - **`getTaskWithContext(db, taskId)`** — Returns full context: task, parent, siblings, subtasks, blockers (via `dependencies` table)
 - **Schema support:** All hierarchy columns (`parent_id`), categories, dependencies exist in DDL but **not wired through `/api/voice`** (always inserts `parent_id = null`)
 
-### `src/durable-objects/session.js` — **REAL (session-scoped task broadcast)**
-- **Class:** `SessionDO extends DurableObject`
-- **Storage:** In-memory array `this.tasks` persisted to `ctx.storage` (key `"tasks"`)
-- **WebSocket:** Accepts upgrade, broadcasts `task_added` to all subscribers on new task
-- **HTTP endpoints:** `GET /tasks` (list session tasks), `POST /tasks` (add to session + broadcast)
-- **Method:** `addTask(taskId, intent)` — called from `handleVoice` after DB insert
+### `src/durable-objects/session.js` — **REAL (live fan-out relay)**
+- **Class:** `SessionDO extends DurableObject` — stateless; D1 is the source of truth
+- **WebSocket:** accepts the upgrade the Worker forwards; `426` on a non-upgrade request
+- **Subscribers:** read from `ctx.getWebSockets()`, never an instance field. `acceptWebSocket` opts into hibernation, so an instance field comes back empty after an eviction and broadcasts would silently reach nobody
+- **Methods:** `addTask(row)`, `updateTask(row)`, `removeTask(taskId)` — each takes the full `getTaskRow` row (not the intent wrapper) and returns how many sockets it reached
+- **`src/lib/live.js`** is the only caller: it names the single DO instance and swallows-and-logs a relay failure so it cannot fail a committed mutation
 
 ---
 
@@ -224,7 +257,7 @@ Authorization: Bearer <TIMON_API_KEY>
 - `500 { "error": "internal_error" }` — DB or unexpected failure
 
 ### Implementation Notes
-- Reuse `extractIntent(text, env)` → `createTask(db, intent)` → `SessionDO.addTask(taskId, intent)`
+- Reuse `extractIntent(text, env)` → `createTask(db, intent)` → `getTaskRow(db, taskId)` → `publishTaskAdded(env, row)`
 - Returns `{task_id, task, status:"created"}` with HTTP 201
 - Auth: Bearer **or** cookie ¹ — 401 on bad/missing key
 - Validation: 400 on empty/missing `text`, 400 on invalid JSON

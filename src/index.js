@@ -9,6 +9,7 @@ import {
   deleteTask,
   addDependency,
   removeDependency,
+  getTaskRow,
 } from "./lib/store.js";
 import { SessionDO } from "./durable-objects/session.js";
 import {
@@ -19,6 +20,13 @@ import {
   timingSafeEqual,
 } from "./lib/auth.js";
 import { checkRateLimit, resetRateLimit, maybeCleanup } from "./lib/rate-limit.js";
+import {
+  publishTaskAdded,
+  publishTaskDeleted,
+  publishTaskUpdated,
+  publishTaskUpdatedByIds,
+  sessionStub,
+} from "./lib/live.js";
 
 export { SessionDO };
 
@@ -132,11 +140,11 @@ async function handleWebSocketConnect(request, env) {
     }
   }
 
-  const sessionId = request.headers.get("x-session-id") || "default";
-  const id = env.SESSION.idFromName(sessionId);
-  const stub = env.SESSION.get(id);
-
-  return stub.fetch(request);
+  // Auth is NOT re-checked here: `isAuthorized` (Bearer or session cookie)
+  // already gated this request in the router above, and the browser's
+  // `__Host-timon_session` cookie rides the upgrade because the handshake is a
+  // plain GET. A second inline check would be a second thing to keep correct.
+  return sessionStub(env).fetch(request);
 }
 
 // Browser login: compare the password against the APP_PASSWORD Worker secret,
@@ -246,10 +254,10 @@ async function handleVoice(request, env) {
   const deviceId = request.headers.get("x-device-id") || null;
   const taskId = await createTask(db, intent, "owner", deviceId);
 
-  const sessionId = request.headers.get("x-session-id") || "default";
-  const id = env.SESSION.idFromName(sessionId);
-  const stub = env.SESSION.get(id);
-  await stub.addTask(taskId, intent);
+  // The ESP32 path is the one the acceptance demo exercises, so it has to
+  // broadcast the same full row the browser path does — an intent wrapper
+  // renders a half-empty card.
+  await publishTaskAdded(env, await getTaskRow(db, taskId));
 
   return new Response(
     JSON.stringify({
@@ -339,15 +347,13 @@ async function handleCreateTask(request, env) {
   }
   const taskId = await createTask(db, intent, "owner", device_id || null);
 
-  const sessionId = request.headers.get("x-session-id") || "default";
-  const id = env.SESSION.idFromName(sessionId);
-  const stub = env.SESSION.get(id);
-  await stub.addTask(taskId, intent);
-
-  const task = await db
-    .prepare("SELECT * FROM tasks WHERE id = ?")
-    .bind(taskId)
-    .first();
+  // Read the full row FIRST: the broadcast and the response body carry the
+  // same shape a `GET /api/tasks` card is built from.
+  const task = await getTaskRow(db, taskId);
+  await publishTaskAdded(env, task);
+  // A new subtask changes its parent's `subtask_count`, so the parent's card
+  // in an open list is now stale.
+  await publishTaskUpdatedByIds(env, db, [task?.parent_id]);
 
   return new Response(
     JSON.stringify({ task_id: taskId, task, status: "created" }),
@@ -436,7 +442,7 @@ async function handlePatchTask(request, taskId, env) {
   }
 
   const existing = await db
-    .prepare(`SELECT id FROM tasks WHERE id = ?`)
+    .prepare(`SELECT id, parent_id FROM tasks WHERE id = ?`)
     .bind(taskId)
     .first();
   if (!existing) {
@@ -445,6 +451,10 @@ async function handlePatchTask(request, taskId, env) {
       headers: { "content-type": "application/json" },
     });
   }
+
+  // Captured BEFORE the write: this is the parent the task is moving away
+  // from, and it has to be read while it is still the parent.
+  const previousParentId = existing.parent_id;
 
   const updates = {};
   for (const key of ["title", "parent_id", "due_date", "priority", "category", "status"]) {
@@ -461,10 +471,14 @@ async function handlePatchTask(request, taskId, env) {
 
   await updateTask(db, taskId, updates);
 
-  const task = await db
-    .prepare(`SELECT * FROM tasks WHERE id = ?`)
-    .bind(taskId)
-    .first();
+  const task = await getTaskRow(db, taskId);
+  await publishTaskUpdated(env, task);
+  // Re-parenting moves a subtask between two other cards, so BOTH of their
+  // `subtask_count`s changed. Announcing only the edited task would leave an
+  // open list showing "3 subtareas" under a parent that now has 2.
+  if (updates.parent_id !== undefined) {
+    await publishTaskUpdatedByIds(env, db, [previousParentId, task?.parent_id]);
+  }
 
   return new Response(JSON.stringify({ task }), {
     status: 200,
@@ -477,7 +491,7 @@ async function handleDeleteTask(taskId, env) {
   await ensureSchema(db);
 
   const existing = await db
-    .prepare(`SELECT id FROM tasks WHERE id = ?`)
+    .prepare(`SELECT id, parent_id FROM tasks WHERE id = ?`)
     .bind(taskId)
     .first();
   if (!existing) {
@@ -487,12 +501,47 @@ async function handleDeleteTask(taskId, env) {
     });
   }
 
+  // Deleting a task edits its neighbours too: `deleteTask` re-parents the
+  // children to null and drops every dependency edge touching it. Collect who
+  // that is BEFORE the rows are gone, so the open tabs can be told.
+  const parentId = existing.parent_id;
+  const affected = await relatedTaskIds(db, taskId, parentId);
+
   await deleteTask(db, taskId);
+
+  await publishTaskDeleted(env, taskId);
+  await publishTaskUpdatedByIds(env, db, affected);
 
   return new Response(JSON.stringify({ deleted: taskId }), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
+}
+
+/** Parent, children and both ends of every dependency edge touching `taskId`. */
+async function relatedTaskIds(db, taskId, parentId) {
+  const children =
+    (await db
+      .prepare(`SELECT id FROM tasks WHERE parent_id = ?`)
+      .bind(taskId)
+      .all()).results || [];
+  const dependents =
+    (await db
+      .prepare(`SELECT task_id FROM dependencies WHERE depends_on_id = ?`)
+      .bind(taskId)
+      .all()).results || [];
+  const blockers =
+    (await db
+      .prepare(`SELECT depends_on_id FROM dependencies WHERE task_id = ?`)
+      .bind(taskId)
+      .all()).results || [];
+
+  return [
+    parentId,
+    ...children.map((row) => row.id),
+    ...dependents.map((row) => row.task_id),
+    ...blockers.map((row) => row.depends_on_id),
+  ];
 }
 
 async function handleAddDependency(request, taskId, env) {
@@ -561,6 +610,11 @@ async function handleAddDependency(request, taskId, env) {
     throw err;
   }
 
+  // Both ends move: the dependent's `blocked_by` grew, and the blocker now
+  // appears in one more "Bloquea a" panel. A context view left open on either
+  // task would otherwise keep showing the pre-edit relationship.
+  await publishTaskUpdatedByIds(env, db, [taskId, dependsOnId]);
+
   return new Response(
     JSON.stringify({
       task_id: taskId,
@@ -591,6 +645,12 @@ async function handleRemoveDependency(taskId, dependsOnId, env) {
 
   const result = await removeDependency(db, taskId, dependsOnId);
   const removed = (result?.meta?.changes ?? 0) > 0;
+
+  // Only announce when an edge actually went away — a no-op DELETE should not
+  // make every open tab re-render.
+  if (removed) {
+    await publishTaskUpdatedByIds(env, db, [taskId, dependsOnId]);
+  }
 
   return new Response(JSON.stringify({ removed }), {
     status: 200,

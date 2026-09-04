@@ -14,6 +14,8 @@ function makeEnv(overrides = {}) {
   };
   const mockSession = {
     addTask: vi.fn(async () => ({})),
+    updateTask: vi.fn(async () => ({})),
+    removeTask: vi.fn(async () => ({})),
   };
   const mockSessionDO = {
     idFromName: vi.fn(() => "mock-id"),
@@ -699,7 +701,9 @@ describe("PATCH /api/tasks/:id", () => {
         run: vi.fn(async () => {}),
         all: vi.fn(async () => ({ results: [] })),
         bind: vi.fn((...args) => {
-          if (sql.includes("SELECT id FROM tasks WHERE id = ?")) {
+          // Existence probe. PATCH also reads parent_id so it can announce
+          // the OLD parent when a task is re-parented (NID-529).
+          if (sql.includes("SELECT id, parent_id FROM tasks WHERE id = ?")) {
             return {
               run: vi.fn(async () => {}),
               first: vi.fn(async () => ({ id: "task-1" })),

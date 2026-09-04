@@ -31,5 +31,23 @@ bun run test:watch   # watch mode
 | `CLOUDFLARE_API_TOKEN` | GitHub `production` secret |
 | `CLOUDFLARE_ACCOUNT_ID` | GitHub `production` secret |
 | `GROQ_API_KEY` | Cloudflare Worker secret (persists) |
-| `TIMON_API_KEY` | Cloudflare Worker secret (persists) |
+| `TIMON_API_KEY` | Cloudflare Worker secret (persists) — Bearer key for the ESP32 / apollo path |
+| `APP_PASSWORD` | Cloudflare Worker secret (persists) — browser login password |
+| `SESSION_SECRET` | Cloudflare Worker secret (persists) — HMAC key for the session cookie. Rotating it revokes every session. |
 | `TZ` | Cloudflare Worker secret (persists) |
+
+## Live updates
+
+An open tab holds one WebSocket to `/api/ws` and re-renders when a task is
+added, edited or deleted anywhere — the ESP32, apollo, or another tab. The
+upgrade is authorized by the same gate as the rest of `/api/*`: the browser's
+`__Host-timon_session` cookie rides the handshake, since a WebSocket upgrade is
+a plain GET and cannot carry an `Authorization` header. The event payload is the
+full `GET /api/tasks` row; see `docs/CONTRACT.md` for the message contract.
+
+Running it locally needs the secrets above in a `.dev.vars` file (gitignored):
+
+```bash
+bun run dev          # http://localhost:8787, serves app/dist for non-/api paths
+cd app && bun run build   # rebuild the SPA the Worker serves
+```

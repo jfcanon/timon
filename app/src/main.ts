@@ -10,9 +10,11 @@
 
 import "./styles.css";
 import { clear, el } from "./dom";
+import { connectLive, type LiveHandle, type LiveSink } from "./live";
 import { renderContext } from "./views/context";
 import { renderList } from "./views/list";
 import { renderLogin, signOut } from "./views/auth";
+import { createLiveIndicator } from "./views/indicator";
 import { offlineBanner } from "./views/states";
 import { contextIdFromPath, filtersFromSearch, listHref } from "./routing";
 
@@ -23,6 +25,33 @@ const bannerSlot = document.getElementById("banner") as HTMLElement;
 
 /** Where to return to once a login succeeds. */
 let pendingReturnTo: string | null = null;
+
+// ── Live updates (NID-529) ─────────────────────────────────────────────────
+//
+// The shell owns ONE socket for the whole session and hands each event to
+// whichever view is currently mounted. Opening it per view would tear the
+// connection down on every navigation and, worse, leave two sockets racing
+// during the overlap.
+
+const indicator = createLiveIndicator();
+let live: LiveHandle | null = null;
+let sink: LiveSink | null = null;
+
+function startLive(): void {
+  if (live) return;
+  live = connectLive({
+    onEvent: (event) => sink?.onEvent(event),
+    onStatus: (status) => indicator.set(status),
+    onResync: () => sink?.onResync(),
+  });
+}
+
+function stopLive(): void {
+  live?.close();
+  live = null;
+  sink = null;
+  indicator.set("reconnecting");
+}
 
 function currentHref(): string {
   return location.pathname + location.search;
@@ -40,6 +69,9 @@ function showLogin(message: string | null = null): void {
   // Remember where the user was so a session that dies on /t/:id does not
   // silently demote them to the list after they log back in.
   pendingReturnTo = currentHref();
+  // No cookie, no upgrade: leaving the socket up here would just back off
+  // against a 401 forever.
+  stopLive();
   clear(mastheadSlot);
   renderLogin(main, message, () => {
     const returnTo = pendingReturnTo ?? "/";
@@ -63,10 +95,12 @@ function masthead(): void {
     });
   });
 
+
   mastheadSlot.append(
     el("header", { class: "masthead" }, [
       el("p", { class: "wordmark" }, ["Timon"]),
       el("div", { class: "masthead__meta" }, [
+        indicator.node,
         el("a", { class: "btn btn--quiet", href: "/", "data-route": "" }, [
           "Tareas",
         ]),
@@ -80,23 +114,25 @@ function route(): void {
   masthead();
   const id = contextIdFromPath(location.pathname);
   if (id) {
-    renderContext(
+    sink = renderContext(
       main,
       id,
       () => showLogin("Tu sesión expiró."),
       (href) => {
         if (href !== currentHref()) history.replaceState({}, "", href);
         route();
-      }
+      },
+      startLive
     );
     return;
   }
-  renderList(
+  sink = renderList(
     main,
     filtersFromSearch(location.search),
     (next) => navigate(listHref(next)),
     () => showLogin("Tu sesión expiró."),
-    (href) => navigate(href)
+    (href) => navigate(href),
+    startLive
   );
 }
 

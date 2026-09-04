@@ -450,3 +450,23 @@ async function decorateTasks(db, tasks) {
 function isResolved(status) {
   return status === "done" || status === "cancelled";
 }
+
+/**
+ * One task in the exact shape `GET /api/tasks` returns — the bare D1 row plus
+ * the same decoration (`parent_title`, `subtask_count`, `blocked_by`,
+ * `blocked_by_count`, `blocked_by_open_count`).
+ *
+ * This is what the live WebSocket broadcasts carry. A card rendered from a
+ * broadcast and a card rendered from a list fetch must be indistinguishable,
+ * so both go through `decorateTasks` rather than one of them shipping a bare
+ * `SELECT *` and rendering half-empty.
+ */
+export async function getTaskRow(db, taskId) {
+  const task = await db
+    .prepare(`SELECT * FROM tasks WHERE id = ?`)
+    .bind(taskId)
+    .first();
+  if (!task) return null;
+  const [decorated] = await decorateTasks(db, [task]);
+  return decorated;
+}
