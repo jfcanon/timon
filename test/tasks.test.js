@@ -302,6 +302,67 @@ describe('POST /api/tasks', () => {
     expect(capturedTaskArgs[5]).toBe('shopping');
   });
 
+  it('should accept parent_id when the parent exists', async () => {
+    const env = makeEnv();
+    let capturedParentId = null;
+
+    const mockTask = {
+      id: 'mock-task-id',
+      title: 'buy milk',
+      parent_id: 'parent-1',
+      due_date: null,
+      priority: 'medium',
+      category: null,
+      created_at: 'now',
+      updated_at: 'now',
+    };
+    const chainable = {
+      run: vi.fn(async () => {}),
+      first: vi.fn(async () => mockTask),
+      all: vi.fn(async () => ({ results: [] })),
+    };
+    const bindFn = vi.fn((...args) => {
+      if (args.length === 8) capturedParentId = args[2];
+      return chainable;
+    });
+    env.TIMON_META.prepare = vi.fn(() => ({
+      run: vi.fn(async () => {}),
+      all: vi.fn(async () => ({ results: [] })),
+      bind: bindFn,
+    }));
+
+    const request = makeRequest(
+      { text: 'buy milk', parent_id: 'parent-1' },
+      env
+    );
+    const response = await worker.fetch(request, env);
+
+    expect(response.status).toBe(201);
+    expect(capturedParentId).toBe('parent-1');
+  });
+
+  it('should return 400 when parent_id does not exist', async () => {
+    const env = makeEnv();
+    env.TIMON_META.prepare = vi.fn(() => ({
+      run: vi.fn(async () => {}),
+      all: vi.fn(async () => ({ results: [] })),
+      bind: vi.fn(() => ({
+        run: vi.fn(async () => {}),
+        first: vi.fn(async () => null),
+        all: vi.fn(async () => ({ results: [] })),
+      })),
+    }));
+    const request = makeRequest(
+      { text: 'buy milk', parent_id: 'missing-parent' },
+      env
+    );
+    const response = await worker.fetch(request, env);
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe('parent_not_found');
+  });
+
   it('should return 400 on an invalid priority', async () => {
     const env = makeEnv();
     // ensureSchema calls db.prepare(sql).run(), so prepare must expose run.

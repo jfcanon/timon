@@ -120,6 +120,27 @@ export async function deleteTask(id: string): Promise<{ deleted: string }> {
   );
 }
 
+export function addDependency(
+  taskId: string,
+  dependsOnId: string
+): Promise<{ task_id: string; depends_on_id: string; status: string }> {
+  return request(`/api/tasks/${encodeURIComponent(taskId)}/dependencies`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ depends_on_id: dependsOnId }),
+  });
+}
+
+export function removeDependency(
+  taskId: string,
+  dependsOnId: string
+): Promise<{ removed: boolean }> {
+  return request(
+    `/api/tasks/${encodeURIComponent(taskId)}/dependencies/${encodeURIComponent(dependsOnId)}`,
+    { method: "DELETE" }
+  );
+}
+
 export async function login(password: string): Promise<void> {
   await request<{ ok: boolean }>("/api/auth/login", {
     method: "POST",

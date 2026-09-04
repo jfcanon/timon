@@ -259,6 +259,35 @@ export async function addDependency(db, taskId, dependsOnId) {
   }
 }
 
+export async function removeDependency(db, taskId, dependsOnId) {
+  const result = await db
+    .prepare(`DELETE FROM dependencies WHERE task_id = ? AND depends_on_id = ?`)
+    .bind(taskId, dependsOnId)
+    .run();
+
+  const changes = result?.meta?.changes ?? 0;
+  if (changes > 0) {
+    const now = new Date().toISOString();
+    await db
+      .prepare(
+        `
+      INSERT INTO task_events (id, ts, task_id, event_type, data)
+      VALUES (?, ?, ?, ?, ?)
+    `
+      )
+      .bind(
+        crypto.randomUUID(),
+        now,
+        taskId,
+        "dependency_removed",
+        JSON.stringify({ depends_on_id: dependsOnId })
+      )
+      .run();
+  }
+
+  return { meta: { changes } };
+}
+
 export async function updateTask(db, taskId, updates) {
   const now = new Date().toISOString();
   const setClauses = [];

@@ -7,6 +7,8 @@ import {
   listTasks,
   updateTask,
   deleteTask,
+  addDependency,
+  removeDependency,
 } from "./lib/store.js";
 import { SessionDO } from "./durable-objects/session.js";
 import {
@@ -67,6 +69,24 @@ export default {
 
       if (url.pathname === "/api/ws") {
         return handleWebSocketConnect(request, env);
+      }
+
+      const depPostMatch = url.pathname.match(
+        /^\/api\/tasks\/([^/]+)\/dependencies$/
+      );
+      if (depPostMatch && request.method === "POST") {
+        return handleAddDependency(request, decodeURIComponent(depPostMatch[1]), env);
+      }
+
+      const depDelMatch = url.pathname.match(
+        /^\/api\/tasks\/([^/]+)\/dependencies\/([^/]+)$/
+      );
+      if (depDelMatch && request.method === "DELETE") {
+        return handleRemoveDependency(
+          decodeURIComponent(depDelMatch[1]),
+          decodeURIComponent(depDelMatch[2]),
+          env
+        );
       }
 
       const taskMatch = url.pathname.match(/^\/api\/tasks\/(.+)$/);
@@ -425,6 +445,109 @@ async function handleDeleteTask(taskId, env) {
   await deleteTask(db, taskId);
 
   return new Response(JSON.stringify({ deleted: taskId }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function handleAddDependency(request, taskId, env) {
+  const db = env.TIMON_META;
+  await ensureSchema(db);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const dependsOnId = body?.depends_on_id;
+  if (!dependsOnId || typeof dependsOnId !== "string" || dependsOnId.trim() === "") {
+    return new Response(JSON.stringify({ error: "depends_on_id_required" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const task = await db
+    .prepare("SELECT id FROM tasks WHERE id = ?")
+    .bind(taskId)
+    .first();
+  if (!task) {
+    return new Response(JSON.stringify({ error: "task_not_found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const dependsOn = await db
+    .prepare("SELECT id FROM tasks WHERE id = ?")
+    .bind(dependsOnId)
+    .first();
+  if (!dependsOn) {
+    return new Response(JSON.stringify({ error: "depends_on_not_found" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  try {
+    await addDependency(db, taskId, dependsOnId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    if (msg === "cannot depend on self") {
+      return new Response(JSON.stringify({ error: "cannot_depend_on_self" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (msg === "dependency cycle detected") {
+      return new Response(
+        JSON.stringify({ error: "dependency_cycle_detected" }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    }
+    throw err;
+  }
+
+  return new Response(
+    JSON.stringify({
+      task_id: taskId,
+      depends_on_id: dependsOnId,
+      status: "created",
+    }),
+    {
+      status: 201,
+      headers: { "content-type": "application/json" },
+    }
+  );
+}
+
+async function handleRemoveDependency(taskId, dependsOnId, env) {
+  const db = env.TIMON_META;
+  await ensureSchema(db);
+
+  const task = await db
+    .prepare("SELECT id FROM tasks WHERE id = ?")
+    .bind(taskId)
+    .first();
+  if (!task) {
+    return new Response(JSON.stringify({ error: "task_not_found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const result = await removeDependency(db, taskId, dependsOnId);
+  const removed = (result?.meta?.changes ?? 0) > 0;
+
+  return new Response(JSON.stringify({ removed }), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
