@@ -112,6 +112,18 @@ def get_backend():
                     # synthesis returns 502 instead of silent sine tone
                 else:
                     _model_loaded = True
+                # Warm Spanish pipeline (lang_code 'e') at startup so first Spanish
+                # request doesn't pay lazy pipeline creation + MLX compile (~2-3 s).
+                try:
+                    from mlx_audio.tts.models.kokoro.pipeline import KokoroPipeline
+                    es_pipeline = KokoroPipeline(lang_code="e", model=_model, repo_id=KOKORO_VOICE_REPO)
+                    _pipeline_map["e"] = es_pipeline
+                    list(es_pipeline("Hola", voice="ef_dora"))
+                    print("Kokoro Spanish pipeline warmed.")
+                except Exception as es_warm_err:
+                    print(f"Spanish pipeline warm-up failed (non-fatal): {es_warm_err}")
+                    # Non-fatal: English pipeline remains warm, Spanish will be created
+                    # lazily on first request if needed.
             except Exception as exc:
                 # Explicit kokoro-mlx request should stay degraded (not silent stub)
                 if os.environ.get("TTS_BACKEND", "auto").strip().lower() == "kokoro-mlx":
