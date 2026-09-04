@@ -3,6 +3,7 @@ import {
   ensureSchema,
   createTask,
   getTaskWithContext,
+  getDecoratedTask,
   setParent,
   addDependency,
   removeDependency,
@@ -42,6 +43,19 @@ describe('createTask', () => {
     await ensureSchema(db);
     const id = await createTask(db, { title: 'X', date: null, priority: 'medium', category: null });
     expect(db._store.tasks.find(t => t.id === id).parent_id).toBeNull();
+  });
+});
+
+describe('getDecoratedTask', () => {
+  it('matches the GET /api/tasks row shape', async () => {
+    await ensureSchema(db);
+    const id = await createTask(db, { title: 'Milk', date: null, priority: 'medium', category: 'errand' });
+    const decorated = await getDecoratedTask(db, id);
+    const [listed] = await listTasks(db);
+    expect(decorated).toEqual(listed);
+    expect(decorated).toHaveProperty('parent_title');
+    expect(decorated).toHaveProperty('blocked_by');
+    expect(decorated).toHaveProperty('subtask_count');
   });
 });
 

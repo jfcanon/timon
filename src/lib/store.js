@@ -353,6 +353,16 @@ export async function deleteTask(db, taskId) {
     .run();
 }
 
+export async function getDecoratedTask(db, taskId) {
+  const task = await db
+    .prepare(`SELECT * FROM tasks WHERE id = ?`)
+    .bind(taskId)
+    .first();
+  if (!task) return null;
+  const [decorated] = await decorateTasks(db, [task]);
+  return decorated;
+}
+
 export async function listTasks(db, { status, category, parent_id } = {}) {
   let sql = `SELECT * FROM tasks WHERE 1=1`;
   const params = [];

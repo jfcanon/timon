@@ -10,6 +10,13 @@
 
 import "./styles.css";
 import { clear, el } from "./dom";
+import {
+  detachLiveView,
+  startLive,
+  stopLive,
+  subscribeStatus,
+  type LiveStatus,
+} from "./live";
 import { renderContext } from "./views/context";
 import { renderList } from "./views/list";
 import { renderLogin, signOut } from "./views/auth";
@@ -36,10 +43,22 @@ function navigate(href: string): void {
   route();
 }
 
+function liveLabel(state: LiveStatus): string {
+  if (state === "live") return "en vivo";
+  if (state === "reconnecting") return "reconectando…";
+  return "sin vivo";
+}
+
+let unsubLive: (() => void) | null = null;
+
 function showLogin(message: string | null = null): void {
   // Remember where the user was so a session that dies on /t/:id does not
   // silently demote them to the list after they log back in.
   pendingReturnTo = currentHref();
+  unsubLive?.();
+  unsubLive = null;
+  detachLiveView();
+  stopLive();
   clear(mastheadSlot);
   renderLogin(main, message, () => {
     const returnTo = pendingReturnTo ?? "/";
@@ -50,6 +69,7 @@ function showLogin(message: string | null = null): void {
 }
 
 function masthead(): void {
+  unsubLive?.();
   clear(mastheadSlot);
 
   const logoutButton = el("button", { type: "button", class: "btn btn--quiet" }, [
@@ -63,10 +83,22 @@ function masthead(): void {
     });
   });
 
+  const liveEl = el(
+    "p",
+    { class: "live", role: "status", "data-state": "offline" },
+    [liveLabel("offline")]
+  );
+  unsubLive = subscribeStatus((state) => {
+    liveEl.textContent = liveLabel(state);
+    liveEl.setAttribute("data-state", state);
+  });
+  startLive();
+
   mastheadSlot.append(
     el("header", { class: "masthead" }, [
       el("p", { class: "wordmark" }, ["Timon"]),
       el("div", { class: "masthead__meta" }, [
+        liveEl,
         el("a", { class: "btn btn--quiet", href: "/", "data-route": "" }, [
           "Tareas",
         ]),
