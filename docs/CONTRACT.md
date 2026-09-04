@@ -16,10 +16,12 @@ All routes defined in `src/index.js`:
 | POST | `/api/auth/logout` | None | — | `{ "ok": true }` + a cleared cookie |
 | POST | `/api/voice` | Bearer **or** cookie ¹ | `multipart/form-data` with `audio` file **OR** raw `audio/wav` body | `{ "task_id": "uuid", "intent": { "title": "string", "date": "ISO8601\|null", "priority": "high\|medium\|low", "category": "string\|null", "tags": "string[]" }, "transcription": "string" }` |
 | GET | `/api/tasks` | Bearer **or** cookie ¹ | — (query params: `status`, `category`, `parent_id`) | `{ "tasks": [{ ...task, "parent_title": "string\|null", "subtask_count": "number", "blocked_by_count": "number", "blocked_by_open_count": "number", "blocked_by": [{ "id": "uuid", "title": "string", "status": "string\|null" }] }] }` ² |
-| POST | `/api/tasks` | Bearer **or** cookie ¹ | `{ "text": "string (required)", "device_id": "string (optional)", "ts": "ISO8601 (optional)", "priority": "high\|medium\|low (optional)", "category": "string (optional)" }` | `{ "task_id": "uuid", "task": { ... }, "status": "created" }` (201) |
+| POST | `/api/tasks` | Bearer **or** cookie ¹ | `{ "text": "string (required)", "device_id": "string (optional)", "ts": "ISO8601 (optional)", "priority": "high\|medium\|low (optional)", "category": "string (optional)", "parent_id": "uuid (optional)" }` | `{ "task_id": "uuid", "task": { ... }, "status": "created" }` (201). `400 {"error":"parent_not_found"}` if `parent_id` is set and no such task exists. |
 | GET | `/api/tasks/:taskId` | Bearer **or** cookie ¹ | — | `{ "task": { ... }, "parent": "task\|null", "siblings": "task[]", "subtasks": "task[]", "blockers": "task[]", "blocks": "task[]" }` |
 | PATCH | `/api/tasks/:taskId` | Bearer **or** cookie ¹ | `{ "title": "string (optional)", "status": "pending\|in_progress\|done\|cancelled (optional)", "due_date": "ISO8601\|null (optional)", "priority": "high\|medium\|low (optional)", "category": "string\|null (optional)", "parent_id": "uuid\|null (optional)" }` | `{ "task": { ... } }` |
 | DELETE | `/api/tasks/:taskId` | Bearer **or** cookie ¹ | — | `{ "deleted": "uuid" }` |
+| POST | `/api/tasks/:taskId/dependencies` | Bearer **or** cookie ¹ | `{ "depends_on_id": "uuid (required)" }` | `{ "task_id": "uuid", "depends_on_id": "uuid", "status": "created" }` (201). Errors: `400 depends_on_id_required` / `cannot_depend_on_self` / `depends_on_not_found` / `dependency_cycle_detected`; `404 task_not_found`. Idempotent if the edge already exists. |
+| DELETE | `/api/tasks/:taskId/dependencies/:dependsOnId` | Bearer **or** cookie ¹ | — | `{ "removed": true\|false }` (200). `removed` is `false` when no row was deleted. `404 task_not_found` if `:taskId` does not exist. |
 | GET | `/api/ws` | Bearer **or** cookie ¹ | WebSocket upgrade | WebSocket connection to `SessionDO` |
 | * | * | — | — | `{ "status": 404, "body": "Not found" }` |
 
@@ -167,11 +169,11 @@ database_id = "d73464c6-f3e8-4809-ab24-900d9b79c94a"
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| **Hierarchy (parent_id)** | **Implemented** | Column exists in DDL, `getTaskWithContext` returns parent/siblings/subtasks, `PATCH /api/tasks/:id` supports `parent_id` updates. |
+| **Hierarchy (parent_id)** | **Implemented** | Column exists in DDL, `getTaskWithContext` returns parent/siblings/subtasks, `POST /api/tasks` accepts `parent_id` (NID-528), `PATCH /api/tasks/:id` supports `parent_id` updates. |
 | **Categories** | **Implemented** | Column exists, `extractIntent` returns category, `createTask` stores it, `GET /api/tasks?category=` filters. |
-| **Dependencies / Blockers** | **Implemented** | `dependencies` table exists, `getTaskWithContext` returns blockers and blocks, `addDependency` manages the graph. |
+| **Dependencies / Blockers** | **Implemented** | `dependencies` table exists, `getTaskWithContext` returns blockers and blocks, `POST /api/tasks/:id/dependencies` and `DELETE /api/tasks/:id/dependencies/:dependsOnId` create/remove edges (NID-549). Voice-path phrasing is not wired. |
 | **Task Read API** | **Implemented** | `GET /api/tasks/:taskId` returns full context (task, parent, siblings, subtasks, blockers, blocks). |
-| **Task Create API (text-in)** | **Implemented** | `POST /api/tasks` with `{text, device_id, ts, priority, category}`. |
+| **Task Create API (text-in)** | **Implemented** | `POST /api/tasks` with `{text, device_id, ts, priority, category, parent_id}`. |
 | **Task Update API** | **Implemented** | `PATCH /api/tasks/:id` supports title, status, due_date, priority, category, parent_id. |
 | **Task Delete API** | **Implemented** | `DELETE /api/tasks/:id` re-parents children, removes dependencies, deletes task. |
 | **Task List/Filter API** | **Implemented** | `GET /api/tasks` with query params (status, category, parent_id), returns `subtask_count`, `blocked_by_count`, `parent_title` and a named `blocked_by` array (NID-527). |
