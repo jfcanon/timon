@@ -15,6 +15,8 @@ import {
 export interface CardOptions {
   /** Suppress the breadcrumb when the card is already nested under its parent. */
   showCrumb: boolean;
+  /** Mark a card that just arrived over the live socket (NID-529). */
+  live?: boolean;
 }
 
 export function taskCard(task: Task, options: CardOptions): HTMLElement {
@@ -96,7 +98,9 @@ export function taskCard(task: Task, options: CardOptions): HTMLElement {
 
   return el(
     "article",
-    { class: `card${done ? " card__done" : ""}` },
+    {
+      class: `card${done ? " card__done" : ""}${options.live ? " card--live" : ""}`,
+    },
     children
   );
 }

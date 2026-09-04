@@ -10,6 +10,7 @@
 // in-page confirmation. Pessimistic UI (refetch after mutation).
 
 import { deleteTask, getTaskContext, patchTask } from "../api";
+import { debounce } from "../debounce";
 import { cells, clear, el, panel, strip } from "../dom";
 import {
   activeBlockers,
@@ -23,48 +24,123 @@ import {
   type Task,
   type TaskContext,
 } from "../format";
+import type { LiveSink } from "../live";
 import { errorState, loadingState, notFoundState } from "./states";
+
+/** Wait out a burst of related broadcasts before re-reading the context. */
+const REFRESH_MS = 400;
 
 function isUnauthorized(error: unknown): boolean {
   return error instanceof Error && error.name === "UnauthorizedError";
+}
+
+/**
+ * Is the user mid-edit inside this view? A live refresh replaces the whole
+ * panel, so running one while someone is typing a new title would delete what
+ * they had written with no way to get it back. The refresh waits instead.
+ */
+function isEditing(root: HTMLElement): boolean {
+  const active = document.activeElement;
+  return (
+    active instanceof HTMLElement &&
+    root.contains(active) &&
+    ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName)
+  );
 }
 
 export function renderContext(
   root: HTMLElement,
   id: string,
   onUnauthorized: () => void,
-  onNavigate: (href: string) => void
-): void {
+  onNavigate: (href: string) => void,
+  onReady: () => void
+): LiveSink {
   clear(root);
   const slot = el("div", { class: "stack" }, [loadingState(2)]);
   root.append(slot);
 
-  const load = (): void => {
+  const draw = (context: TaskContext, focusTitle: boolean): void => {
     clear(slot);
-    slot.append(loadingState(2));
-
-    getTaskContext(id)
-      .then((context) => {
-        clear(slot);
-        slot.append(view(context, load, onUnauthorized, onNavigate));
-        const heading = slot.querySelector<HTMLElement>(".title");
-        heading?.focus();
-      })
-      .catch((error: unknown) => {
-        if (isUnauthorized(error)) {
-          onUnauthorized();
-          return;
-        }
-        clear(slot);
-        const isMissing =
-          typeof error === "object" &&
-          error !== null &&
-          (error as { status?: number }).status === 404;
-        slot.append(isMissing ? notFoundState() : errorState(error, load));
-      });
+    slot.append(view(context, load, onUnauthorized, onNavigate));
+    if (focusTitle) slot.querySelector<HTMLElement>(".title")?.focus();
   };
 
+  const fail = (error: unknown, replace: boolean): void => {
+    if (isUnauthorized(error)) {
+      onUnauthorized();
+      return;
+    }
+    const isMissing =
+      typeof error === "object" &&
+      error !== null &&
+      (error as { status?: number }).status === 404;
+    // A background refresh that fails leaves the last good render in place —
+    // except for a 404, which means the task really is gone and continuing to
+    // show it would be a lie.
+    if (!replace && !isMissing) return;
+    clear(slot);
+    slot.append(isMissing ? notFoundState() : errorState(error, load));
+  };
+
+  function load(): void {
+    clear(slot);
+    slot.append(loadingState(2));
+    getTaskContext(id)
+      .then((context) => {
+        draw(context, true);
+        // Session confirmed — the shell may open the live socket now.
+        onReady();
+      })
+      .catch((error: unknown) => fail(error, true));
+  }
+
+  // A refresh deferred because the user was typing. It runs the moment focus
+  // leaves the form rather than being dropped.
+  let deferred = false;
+
+  function refresh(): void {
+    if (isEditing(slot)) {
+      deferred = true;
+      return;
+    }
+    deferred = false;
+    getTaskContext(id)
+      // No skeleton and no focus grab: this is someone else's edit arriving,
+      // not a navigation the user asked for.
+      .then((context) => draw(context, false))
+      .catch((error: unknown) => fail(error, false));
+  }
+
+  const refreshSoon = debounce(refresh, REFRESH_MS);
+
+  slot.addEventListener("focusout", () => {
+    // `focusout` fires before focus lands, so the check has to run after.
+    window.setTimeout(() => {
+      if (deferred && !isEditing(slot)) refresh();
+    }, 0);
+  });
+
   load();
+
+  return {
+    onEvent(event) {
+      if (event.type === "task_deleted" && event.task_id === id) {
+        refreshSoon.cancel();
+        clear(slot);
+        slot.append(notFoundState());
+        return;
+      }
+      // Any other event can reach this screen: the task itself, its parent, a
+      // sibling, a subtask, a blocker, or a task it blocks. Re-reading the one
+      // endpoint that already returns all of them is both the simplest and the
+      // only reliably correct answer.
+      refreshSoon();
+    },
+    onResync() {
+      refreshSoon.cancel();
+      refresh();
+    },
+  };
 }
 
 function view(

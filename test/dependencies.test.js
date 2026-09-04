@@ -8,7 +8,11 @@ function makeEnv() {
     TIMON_META: createMockD1(),
     SESSION: {
       idFromName: vi.fn(() => 'mock-id'),
-      get: vi.fn(() => ({ addTask: vi.fn(async () => ({})) })),
+      get: vi.fn(() => ({
+        addTask: vi.fn(async () => ({})),
+        updateTask: vi.fn(async () => ({})),
+        removeTask: vi.fn(async () => ({})),
+      })),
     },
     ASSETS: {
       fetch: vi.fn(async () => new Response('ok', { status: 200 })),
