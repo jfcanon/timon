@@ -26,10 +26,13 @@ export class UnauthorizedError extends ApiError {
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let res: Response;
   try {
+    // Spread init first, then set headers and credentials last to ensure they
+    // are never overwritten by caller-provided values.
+    const { headers: initHeaders, ...rest } = init;
     res = await fetch(path, {
+      ...rest,
       credentials: "same-origin",
-      headers: { accept: "application/json", ...(init.headers ?? {}) },
-      ...init,
+      headers: { accept: "application/json", ...(initHeaders ?? {}) },
     });
   } catch {
     throw new ApiError(

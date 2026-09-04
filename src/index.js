@@ -18,6 +18,7 @@ import {
   clearedSessionCookieValue,
   timingSafeEqual,
 } from "./lib/auth.js";
+import { checkRateLimit, resetRateLimit, maybeCleanup } from "./lib/rate-limit.js";
 
 export { SessionDO };
 
@@ -113,6 +114,24 @@ export default {
 };
 
 async function handleWebSocketConnect(request, env) {
+  // Origin check: WebSocket handshakes are not subject to CORS, so we need
+  // an explicit Origin allowlist check to prevent cross-site WebSocket hijacking.
+  const origin = request.headers.get("origin");
+  if (origin) {
+    const url = new URL(request.url);
+    const allowedOrigins = [
+      url.origin,
+      "https://timon.ygdcbtmc4u.uk",
+      "https://timon-worker.ygdcbtmc4u.workers.dev",
+    ];
+    if (!allowedOrigins.includes(origin)) {
+      return new Response(JSON.stringify({ error: "forbidden" }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      });
+    }
+  }
+
   const sessionId = request.headers.get("x-session-id") || "default";
   const id = env.SESSION.idFromName(sessionId);
   const stub = env.SESSION.get(id);
@@ -123,10 +142,26 @@ async function handleWebSocketConnect(request, env) {
 // Browser login: compare the password against the APP_PASSWORD Worker secret,
 // then set a signed HttpOnly session cookie. No Bearer key ever reaches the JS.
 async function handleLogin(request, env) {
-  if (!env.APP_PASSWORD) {
+  if (!env.APP_PASSWORD || !env.SESSION_SECRET) {
     return new Response(JSON.stringify({ error: "auth_unavailable" }), {
       status: 500,
       headers: { "content-type": "application/json" },
+    });
+  }
+
+  // Rate limit by IP
+  const ip = request.headers.get("cf-connecting-ip") || "unknown";
+  const rateKey = `login:${ip}`;
+  const { allowed, retryAfter } = checkRateLimit(rateKey);
+  maybeCleanup();
+
+  if (!allowed) {
+    return new Response(JSON.stringify({ error: "too_many_attempts" }), {
+      status: 429,
+      headers: {
+        "content-type": "application/json",
+        "retry-after": String(retryAfter),
+      },
     });
   }
 
@@ -148,14 +183,24 @@ async function handleLogin(request, env) {
     });
   }
 
-  const token = await createSessionToken(env, "owner");
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: {
-      "content-type": "application/json",
-      "set-cookie": sessionCookieValue(token),
-    },
-  });
+  // Successful login resets rate limit
+  resetRateLimit(rateKey);
+
+  try {
+    const token = await createSessionToken(env, "owner");
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "set-cookie": sessionCookieValue(token),
+      },
+    });
+  } catch {
+    return new Response(JSON.stringify({ error: "auth_unavailable" }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  }
 }
 
 async function handleLogout(request, env) {

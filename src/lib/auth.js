@@ -7,8 +7,12 @@
 //
 // Session cookies are HMAC-signed (WebCrypto, no dependency) over a
 // `{ sub, exp }` payload. Expired or tampered cookies are a 401, never a crash.
+//
+// Session revocation: There is no server-side session store. To revoke all
+// sessions, rotate SESSION_SECRET via `wrangler secret put SESSION_SECRET` with
+// a new 32-byte random value. All existing cookies will fail verification.
 
-const SESSION_COOKIE = "timon_session";
+const SESSION_COOKIE = "__Host-timon_session";
 export const SESSION_MAX_AGE = 30 * 24 * 3600; // 30 days
 
 function toBase64Url(input) {
@@ -78,12 +82,12 @@ export function timingSafeEqual(a, b) {
 
 // The Bearer gate, unchanged in behaviour from the previous inline version:
 // the TIMON_API_KEY is only ever compared server-side and is never shipped to
-// the browser.
+// the browser. Uses timingSafeEqual to prevent timing attacks.
 export function verifyApiKey(request, env) {
   const auth = request.headers.get("authorization") || "";
   if (!auth.startsWith("Bearer ")) return false;
   const token = auth.slice(7);
-  return token === env.TIMON_API_KEY;
+  return timingSafeEqual(token, env.TIMON_API_KEY);
 }
 
 export function getSessionCookie(request) {
@@ -101,8 +105,10 @@ export function getSessionCookie(request) {
 export async function verifySessionCookie(request, env) {
   if (!env.SESSION_SECRET) return false;
   const token = getSessionCookie(request);
-  if (!token || !token.includes(".")) return false;
-  const [payloadB64, sig] = token.split(".");
+  if (!token) return false;
+  const parts = token.split(".");
+  if (parts.length !== 2) return false;
+  const [payloadB64, sig] = parts;
   let payload;
   try {
     payload = JSON.parse(new TextDecoder().decode(fromBase64Url(payloadB64)));
